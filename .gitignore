@@ -1,3 +1,6 @@
 node_modules/
 data/
 .env
+.e2e-data/
+test-results/
+playwright-report/

@@ -755,7 +755,7 @@ async function ownerSource() {
   <div class="grid g2" style="margin-top:16px;align-items:start">
     <div class="card grid" style="gap:10px"><h3>Import an export file</h3>
       <p class="small muted">Export the investor table from ai-home.world (XLSX or CSV) and upload it here. Recognised columns: Country, City, AreaNameEn, PropertyTypeEn, Client Role, Client name, NATIONALITY, Master Developer, Project Name, Size(M2), Price/ProcedureValue, Registration_Date, plus optional transaction ID, email, phone/mobile, WhatsApp. Re-importing the same file never creates duplicates.</p>
-      <input type="file" id="src-file" accept=".xlsx,.csv">
+      <input type="file" id="src-file" accept=".xlsx,.csv" aria-label="ai-home.world export file">
       <div class="row"><button class="btn" data-act="src-preview">Preview mapping</button><button class="btn gold" data-act="src-import">Import</button></div>
       <div id="src-out"></div></div>
     <div class="card grid" style="gap:10px"><div class="row" style="justify-content:space-between"><h3 style="margin:0">API sync</h3>${statusBadge(s.api)}</div>
@@ -812,7 +812,7 @@ async function ownerAudit() {
 const actions = {
   menu: () => document.body.classList.toggle('nav-open'),
   close: () => closeModal(),
-  'close-nav': () => closeModal(),
+  'close-nav': (el) => { closeModal(); go(el.getAttribute('href')); },
   'close-refresh': () => { closeModal(); render(); },
   logout: async () => { await POST('/api/auth/logout'); state.cfg = null; state.ih = { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null }; go('#/'); },
   'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
@@ -880,7 +880,7 @@ const actions = {
   },
   'crm-import': () => {
     openModal(`<h2>Import leads form.xlsx</h2><p class="small muted">All 38 original columns are preserved. Duplicates by email are left for manual review, never merged.</p>
-      <input type="file" id="imp-file" accept=".xlsx"><label class="check"><input type="checkbox" id="imp-rights"> I confirm we hold the rights and lawful basis to import these contacts.</label>
+      <input type="file" id="imp-file" accept=".xlsx" aria-label="leads form.xlsx file"><label class="check"><input type="checkbox" id="imp-rights"> I confirm we hold the rights and lawful basis to import these contacts.</label>
       <div id="imp-out"></div><div class="row"><button class="btn" id="imp-preview">Preview</button><button class="btn primary" id="imp-commit">Import</button><button class="btn ghost" data-act="close">${t('close')}</button></div>`);
     const read = () => new Promise((res, rej) => { const f = document.getElementById('imp-file').files[0]; if (!f) return rej(new Error('Choose a file')); const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(f); });
     const run = async (commit) => {

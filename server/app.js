@@ -205,7 +205,8 @@ export function createApp() {
   r.post('/owner/cold-exports', OWNER, requireRecentMfa, ok((req) => owner.createOwnerExport({ user: req.user, filter: req.body.filter, fields: req.body.fields })));
   r.get('/owner/cold-exports/:jobId', OWNER, requireRecentMfa, (req, res) => {
     const f = owner.exportFile(req.params.jobId, req.user);
-    res.download(f.file, f.name);
+    // The path is server-generated (never user input), so serving from a dot-folder is safe.
+    res.download(f.file, f.name, { dotfiles: 'allow' });
   });
   r.post('/owner/cash/:id/verify', FINANCE, requireRecentMfa, ok((req) => billing.verifyCash({
     requestId: req.params.id, approver: req.user, amountCents: Math.round(Number(req.body.amount_usd) * 100), currency: req.body.currency || 'USD',

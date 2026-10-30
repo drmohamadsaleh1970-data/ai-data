@@ -19,6 +19,7 @@ DEMO_MODE=true npm run seed  # FICTIONAL demo data + personas (never in producti
 DEMO_MODE=true npm run dev   # http://localhost:3000  (watch mode)
 npm run build                # syntax-check all modules
 npm test                     # 30 acceptance/integration tests
+npm run test:e2e             # 8 Playwright browser tests (fresh fictional DB on port 3100)
 npm run bootstrap-owner -- --email owner@your-domain.com   # one-time owner bootstrap token
 docker compose up --build    # containerized demo
 ```
@@ -76,6 +77,22 @@ Open `/#/signin` and pick a persona.
   - Fresh CRM phone numbers are never overwritten by historical data.
   - The 38-column xlsx import works.
   - First contact is recorded only when the agent sets a contacted stage.
+
+## Browser (E2E) tests (`npm run test:e2e`)
+
+These run in Chromium against a local server seeded with fictional data (`playwright.config.js` starts it on port 3100). Tested journeys:
+- **Landing and pricing:** both Cold plans; Hot Leads shown as priced separately.
+- **Demo sign-in:** lands on the overview with the shared quota.
+- **Investor History:**
+  - Results are masked and there's no export button.
+  - 3 selected records are transferred, quota +3, and they open in the CRM with the "historical" label.
+- **Cash payment:** pending → finance verifies (MFA) → magic link activates → the reused link is refused.
+- **Owner:** unmasked data; XLSX export after MFA (watermark and manifest checked).
+- **ai-home.world import:** preview the column mapping, then import with MFA.
+- **Arabic:** the app switches to right-to-left.
+- **Raw-export and owner APIs:** refused for a subscriber session.
+
+Not covered in the browser: Google sign-in and PayPal (real third-party services; covered by server tests with verified-webhook fakes) and Hot pool allocation.
 
 ## Implemented vs. still needed
 

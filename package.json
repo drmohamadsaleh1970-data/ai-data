@@ -4,7 +4,9 @@
   "private": true,
   "description": "AI-HOME.WORLD integrated portal: Cold Data subscriptions, Hot Leads, multilingual CRM",
   "type": "module",
-  "engines": { "node": "22.x" },
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "node --no-warnings --watch server/index.js",
     "start": "node --no-warnings server/index.js",
@@ -12,11 +14,15 @@
     "seed": "node --no-warnings scripts/seed.js",
     "bootstrap-owner": "node --no-warnings scripts/bootstrap-owner.js",
     "build": "node --no-warnings scripts/check.js",
-    "test": "node --no-warnings --test --test-concurrency=1 test/*.test.js"
+    "test": "node --no-warnings --test --test-concurrency=1 test/*.test.js",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "exceljs": "4.4.0",
     "express": "5.1.0",
     "jose": "5.9.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
   }
 }
