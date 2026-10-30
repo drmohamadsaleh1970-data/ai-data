@@ -1,0 +1,14 @@
+# Local evaluation with fictional DEMO data. For production, drop DEMO_MODE, set
+# NODE_ENV=production, provide real credentials via an env file / secret store.
+services:
+  portal:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      NODE_ENV: development
+      DEMO_MODE: "true"
+    env_file: [{ path: .env, required: false }]
+    volumes: [portal-data:/data]
+    command: ["sh", "-c", "node --no-warnings scripts/seed.js && node --no-warnings server/index.js"]
+volumes:
+  portal-data:
