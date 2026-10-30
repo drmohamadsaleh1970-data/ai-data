@@ -7,7 +7,7 @@ import { syncFromApi } from './source-aihome.js';
 getDb();
 const app = createApp();
 app.listen(config.port, () => {
-  console.log(`AI-HOME portal on ${config.baseUrl}${config.demoMode ? '  [DEMO MODE — fictional data]' : ''}`);
+  console.log(`AI-DATA portal on ${config.baseUrl}${config.demoMode ? '  [DEMO MODE — fictional data]' : ''}`);
 });
 
 // SLA escalation worker. In production run this in a separate worker process

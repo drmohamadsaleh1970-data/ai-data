@@ -27,7 +27,7 @@ export async function createOwnerExport({ user, filter, fields }) {
   const fileName = `owner-export-${jobId}-${randomToken(9)}.xlsx`;
   const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: path.join(EXPORT_DIR, fileName) });
   const ws = wb.addWorksheet('Transactions');
-  ws.addRow([`CONFIDENTIAL — AI-HOME.WORLD owner export #${jobId} — ${user.email} — ${iso()}`]).commit();
+  ws.addRow([`CONFIDENTIAL — AI-DATA owner export #${jobId} — ${user.email} — ${iso()}`]).commit();
   ws.addRow(cols).commit();
   const where = ['1=1'];
   const params = [];
@@ -45,7 +45,7 @@ export async function createOwnerExport({ user, filter, fields }) {
   ws.commit();
   const manifest = wb.addWorksheet('Manifest');
   [['Export job', jobId], ['Exported by', user.email], ['Exported at', iso()], ['Rows', count], ['Filter', JSON.stringify(f)], ['Fields', cols.join(', ')],
-    ['Notice', 'Contains personal data. Handle under AI-HOME data-protection policy. Do not redistribute.']].forEach((r) => manifest.addRow(r).commit());
+    ['Notice', 'Contains personal data. Handle under AI-DATA data-protection policy. Do not redistribute.']].forEach((r) => manifest.addRow(r).commit());
   manifest.commit();
   await wb.commit();
   db.prepare("UPDATE owner_export_job SET status = 'COMPLETED', row_count = ?, file_name = ? WHERE id = ?").run(count, fileName, jobId);
@@ -57,7 +57,7 @@ export function exportFile(jobId, user) {
   const job = getDb().prepare('SELECT * FROM owner_export_job WHERE id = ?').get(Number(jobId));
   if (!job || job.status !== 'COMPLETED') throw new HttpError(404, 'NOT_FOUND');
   audit({ actor: user.id, action: 'OWNER_XLSX_DOWNLOAD', target: `export:${job.id}` });
-  return { file: path.join(EXPORT_DIR, job.file_name), name: `aihome-investors-${job.id}.xlsx` };
+  return { file: path.join(EXPORT_DIR, job.file_name), name: `ai-data-investors-${job.id}.xlsx` };
 }
 
 export function dashboard() {

@@ -13,10 +13,10 @@ test('owner sees unmasked data and can export XLSX only after MFA', async ({ pag
   const download = page.getByRole('link', { name: 'Download XLSX' });
   await expect(download).toBeVisible();
   const [file] = await Promise.all([page.waitForEvent('download'), download.click()]);
-  expect(file.suggestedFilename()).toMatch(/^aihome-investors-\d+\.xlsx$/);
+  expect(file.suggestedFilename()).toMatch(/^ai-data-investors-\d+\.xlsx$/);
 
   const xlsx = readXlsxSummary(await file.path());
-  expect(xlsx.title).toContain('CONFIDENTIAL — AI-HOME.WORLD owner export');
+  expect(xlsx.title).toContain('CONFIDENTIAL — AI-DATA owner export');
   expect(xlsx.sheets).toEqual(['Transactions', 'Manifest']);
 });
 

@@ -33,6 +33,13 @@ export function createApp() {
     });
     next();
   });
+  // Public intake (lead forms on other websites, Zapier/Make) uses no cookies and is
+  // authenticated by a site key, so any origin may call it.
+  app.use('/api/public', (req, res, next) => {
+    res.set({ 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Site-Key', 'Access-Control-Max-Age': '86400' });
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
   app.use(express.json({ limit: '12mb' }));
   app.use(loadSession);
   app.use(csrfGuard);
@@ -69,7 +76,7 @@ export function createApp() {
     return { ok: true };
   }));
   r.post('/auth/logout', ok((req, res) => { destroySession(req, res); return { ok: true }; }));
-  r.post('/public/inquiry', ok((req) => hot.intakeInquiry({ siteKey: req.get('x-site-key') || req.body.site_key, body: req.body || {}, ip: req.ip })));
+  r.post('/public/inquiry', ok((req) => hot.intakeInquiry({ siteKey: req.get('x-site-key') || req.body.site_key, body: req.body || {}, ip: req.ip, origin: req.get('origin') })));
   r.post('/public/search-event', ok((req) => hot.recordSearchEvent(req.body || {})));
   r.post('/webhooks/paypal', ok((req) => billing.handlePaypalWebhook(req.headers, req.body)));
 
@@ -193,7 +200,7 @@ export function createApp() {
     db.prepare("UPDATE platform_user SET platform_role = 'PLATFORM_OWNER', mfa_secret = ? WHERE id = ?").run(secret, req.user.id);
     db.prepare('UPDATE owner_bootstrap SET used_at = ?, used_by = ? WHERE id = ?').run(iso(), req.user.id, row.id);
     audit({ actor: req.user.id, action: 'OWNER_BOOTSTRAPPED' });
-    return { otpauth_url: `otpauth://totp/AI-HOME.WORLD:${encodeURIComponent(req.user.email)}?secret=${secret}&issuer=AI-HOME.WORLD`, secret };
+    return { otpauth_url: `otpauth://totp/AI-DATA:${encodeURIComponent(req.user.email)}?secret=${secret}&issuer=AI-DATA`, secret };
   }));
   r.get('/owner/dashboard', FINANCE, ok(() => owner.dashboard()));
   r.post('/owner/cold/search', OWNER, ok((req) => {
@@ -219,7 +226,9 @@ export function createApp() {
   }));
   r.post('/owner/subscriptions/:id/reissue-link', FINANCE, requireRecentMfa, ok((req) => billing.reissueMagicLink({ subscriptionId: req.params.id, actor: req.user })));
   r.post('/owner/subscriptions/:id/terminate', FINANCE, requireRecentMfa, ok((req) => { billing.terminateSubscription({ subscriptionId: req.params.id, actor: req.user, reason: req.body.reason }); return { ok: true }; }));
-  r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources() })));
+  r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources(), site_keys: hot.siteKeys() })));
+  r.post('/owner/hot/site-keys', OWNER, ok((req) => hot.createSiteKey({ actor: req.user, orgId: req.body.org_id || null, label: req.body.label, allowedOrigin: req.body.allowed_origin })));
+  r.post('/owner/hot/site-keys/:key/revoke', OWNER, ok((req) => hot.revokeSiteKey({ actor: req.user, key: req.params.key })));
   r.post('/owner/hot/pricing', OWNER, requireRecentMfa, ok((req) => hot.configurePricing({ actor: req.user, model: req.body.model, priceCents: Math.round(Number(req.body.price_usd) * 100), exclusive: req.body.exclusive !== false })));
   r.post('/owner/hot/entitlements', OWNER, requireRecentMfa, ok((req) => hot.grantEntitlement({ actor: req.user, orgId: req.body.org_id, credits: Number(req.body.credits) })));
   r.post('/owner/hot/pool/:id/allocate', OWNER, ok((req) => hot.allocate({ actor: req.user, poolId: req.params.id, orgId: req.body.org_id })));

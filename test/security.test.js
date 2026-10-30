@@ -45,7 +45,7 @@ test('finance admin cannot export; owner export needs fresh MFA and yields a wat
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(Buffer.from(file.data));
   const ws = wb.getWorksheet('Transactions');
-  assert.match(ws.getRow(1).getCell(1).text, /CONFIDENTIAL — AI-HOME.WORLD owner export/);
+  assert.match(ws.getRow(1).getCell(1).text, /CONFIDENTIAL — AI-DATA owner export/);
   assert.deepEqual(ws.getRow(2).values.slice(1), ['investor_id', 'full_name', 'email', 'phone', 'area', 'price_aed']);
   assert.equal(ws.rowCount - 2, job.data.rows);
   assert.ok(wb.getWorksheet('Manifest'));

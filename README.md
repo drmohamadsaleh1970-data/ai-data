@@ -1,4 +1,4 @@
-# AI-HOME.WORLD Portal
+# AI-DATA Portal
 
 A **standalone** portal. It does not run inside www.ai-home.world. It imports only the **investor history data** from ai-home.world (by file or API; see `DATA_SOURCE.md`) and provides everything else itself:
 
@@ -6,7 +6,11 @@ A **standalone** portal. It does not run inside www.ai-home.world. It imports on
 - A separately billed **Hot Leads** product.
 - A multilingual **CRM** in English, Arabic (RTL), French, Russian and Turkish.
 
-See `DATA_SOURCE.md` for how investor data is imported from ai-home.world, `docs/ARCHITECTURE.md` for the design and API, and `docs/COMPLIANCE_CHECKLIST.md` before going live.
+Guides:
+- **Import investor data from ai-home.world:** `DATA_SOURCE.md`
+- **Get Hot Leads** (website form, Meta/Google/TikTok via Zapier or Make, API): `docs/HOT_LEADS.md`
+- **Design and API:** `docs/ARCHITECTURE.md`
+- **Before going live:** `docs/COMPLIANCE_CHECKLIST.md`
 
 ## Commands
 

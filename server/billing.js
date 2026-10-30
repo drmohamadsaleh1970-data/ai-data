@@ -56,7 +56,7 @@ export async function startPaypalCheckout({ orgId, planCode, user }) {
       plan_id: config.paypal.planIds[planCode],
       custom_id: `aih-sub-${subId}`,
       subscriber: { email_address: user.email },
-      application_context: { brand_name: 'AI-HOME.WORLD', user_action: 'SUBSCRIBE_NOW', return_url: `${config.baseUrl}/#/billing?paypal=return`, cancel_url: `${config.baseUrl}/#/billing?paypal=cancel` },
+      application_context: { brand_name: 'AI-DATA', user_action: 'SUBSCRIBE_NOW', return_url: `${config.baseUrl}/#/billing?paypal=return`, cancel_url: `${config.baseUrl}/#/billing?paypal=cancel` },
     }),
   });
   if (!res.ok) throw new HttpError(502, 'PAYPAL_CREATE_FAILED');
@@ -227,7 +227,7 @@ function issueMagicLink(conn, { orgId, userId, subscriptionId }) {
   const user = conn.prepare('SELECT email FROM platform_user WHERE id = ?').get(userId);
   // Token travels in the URL fragment, which browsers never send to servers or in Referer.
   conn.prepare('INSERT INTO email_outbox (to_user_id, to_email, subject, body, created_at) VALUES (?,?,?,?,?)').run(userId, user.email,
-    'Activate your AI-HOME.WORLD subscription',
+    'Activate your AI-DATA subscription',
     `Your offline payment has been verified. Sign in with this Google account and open:\n${config.baseUrl}/#/activate/${token}\nThis single-use link expires ${expires}.`, ts);
   conn.prepare('INSERT INTO audit_log (at, org_id, action, target) VALUES (?,?,?,?)').run(ts, orgId, 'MAGIC_LINK_ISSUED', `link:${id}`);
   return { id, email: user.email, token };
@@ -274,7 +274,7 @@ export function terminateSubscription({ subscriptionId, actor, reason }) {
   if (!sub) throw new HttpError(404, 'NOT_FOUND');
   getDb().prepare("UPDATE subscription SET status = 'CANCELLED', current_period_end = ?, updated_at = ? WHERE id = ?").run(iso(), iso(), sub.id);
   audit({ actor: actor.id, org: sub.org_id, action: 'SUBSCRIPTION_TERMINATED', target: `subscription:${sub.id}`, meta: { reason } });
-  notify(getDb().prepare('SELECT owner_user_id FROM organization WHERE id = ?').get(sub.org_id).owner_user_id, sub.org_id, 'SUBSCRIPTION_TERMINATED', 'Your subscription was terminated by AI-HOME finance.', '#/billing');
+  notify(getDb().prepare('SELECT owner_user_id FROM organization WHERE id = ?').get(sub.org_id).owner_user_id, sub.org_id, 'SUBSCRIPTION_TERMINATED', 'Your subscription was terminated by AI-DATA finance.', '#/billing');
 }
 
 export function billingView(orgId) {

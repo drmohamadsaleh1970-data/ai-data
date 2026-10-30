@@ -152,7 +152,7 @@ window.addEventListener('hashchange', render);
 // ---------------------------------------------------------------------------------
 // Shell
 // ---------------------------------------------------------------------------------
-const logo = (dark) => `<a class="logo" href="#/"><span class="logo-mark">A</span><span>AI-HOME.WORLD<small${dark ? '' : ''}>Investor Intelligence</small></span></a>`;
+const logo = (dark) => `<a class="logo" href="#/"><span class="logo-mark">A</span><span>AI-DATA<small${dark ? '' : ''}>Investor Intelligence</small></span></a>`;
 
 function shell(name, parts, content) {
   const link = (href, key, ico, active) => `<a class="nav-link ${active ? 'active' : ''}" href="${href}"><span class="ico">${ico}</span>${esc(t(key))}</a>`;
@@ -251,7 +251,7 @@ async function viewLanding() {
     <div class="card" style="align-self:start"><h3>⚖ ${t('compliance_title')}</h3><p class="muted">${t('compliance_body')}</p>
       <div class="chips"><span class="chip">UAE PDPL-aware controls</span><span class="chip">Opt-out propagation</span><span class="chip">Per-record provenance</span><span class="chip">Audit log</span></div></div>
   </div></section>
-  <footer class="footer">© ${new Date().getFullYear()} AI-HOME.WORLD Portal · Investor history data sourced from ai-home.world · CRM · Hot Leads. Software supports compliance; it does not certify legality.</footer>`;
+  <footer class="footer">© ${new Date().getFullYear()} AI-DATA Portal · Investor history data sourced from ai-home.world · CRM · Hot Leads. Software supports compliance; it does not certify legality.</footer>`;
 }
 
 async function viewSignIn() {
@@ -273,7 +273,7 @@ async function viewSignIn() {
     </div>
     ${c.demo_mode ? `<div class="card grid"><div class="row"><h3 style="margin:0">DEMO personas</h3><span class="badge warn">Fictional</span></div>
       ${personas.map(([k, n, d]) => `<button class="persona" data-act="demo-login" data-persona="${k}"><span class="avatar">${n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>` : ''}
-    <a href="#/" class="small muted" style="text-align:center">← AI-HOME.WORLD</a>
+    <a href="#/" class="small muted" style="text-align:center">← AI-DATA</a>
   </div></div>`;
 }
 
@@ -525,22 +525,25 @@ async function viewMyCold() {
   <tbody>${rows.map((r) => `<tr><td><b>${esc(r.full_name || '—')}</b></td><td>${fmtDT(r.granted_at)}</td><td>${esc(r.granted_by)}</td><td class="num">${r.transactions}</td><td><span class="badge ${r.marketing_permission === 'GRANTED' ? 'ok' : r.marketing_permission === 'DENIED' ? 'bad' : 'warn'}">${esc(human(r.marketing_permission))}</span></td><td>${r.lead_id ? `<a class="btn sm" href="#/crm/lead/${r.lead_id}">${t('open_in_crm')}</a>` : ''}</td></tr>`).join('') || `<tr><td colspan="6" class="empty">No records transferred yet. <a href="#/investor-history">${t('step_search')}</a></td></tr>`}</tbody></table></div>`;
 }
 
+// Drop-in lead form for any website; leads arrive through /api/public/inquiry.
+const embedSnippet = (key) => `<div data-ai-data-form data-site-key="${key}" data-lang="en"></div>\n<script src="${location.origin}/lead-form.js" defer></script>`;
+
 async function viewHot() {
   const h = await GET('/api/hot');
   const ent = h.entitlements.reduce((s, e) => s + (e.credits_total - e.credits_used), 0);
-  const snippet = h.site_keys[0] ? `<form action="${location.origin}/api/public/inquiry" data-aihome-site="${h.site_keys[0].key}">\n  <!-- POST JSON with header X-Site-Key: ${h.site_keys[0].key} -->\n  full_name, phone | email, consent_contact (required), consent_marketing, area, property_type, bedrooms, budget_max_aed\n</form>` : '';
+  const snippet = h.site_keys[0] ? embedSnippet(h.site_keys[0].key) : '';
   return `<div class="page-head"><div><div class="kicker">🔥 Hot</div><h1>${t('hot_leads')}</h1></div></div>
   <div class="banner hot" style="margin-bottom:16px">🔥 Hot Leads are a separate product with a separate ledger. They never use your Cold allowance, and your Cold plan does not include them.</div>
   <div class="grid g3">
     <div class="card"><div class="stat hot"><span class="l">${t('hot_balance')}</span><span class="v">${fmtNum(ent)}</span></div></div>
-    <div class="card"><div class="stat"><span class="l">AI-HOME Hot pricing</span><span class="v" style="font-size:20px">${h.pricing.configured ? `${fmtUSD(h.pricing.rule.price_cents)} · ${esc(human(h.pricing.rule.model))}` : `<span class="badge warn">${t('owner_config_required')}</span>`}</span></div>
+    <div class="card"><div class="stat"><span class="l">AI-DATA Hot pricing</span><span class="v" style="font-size:20px">${h.pricing.configured ? `${fmtUSD(h.pricing.rule.price_cents)} · ${esc(human(h.pricing.rule.model))}` : `<span class="badge warn">${t('owner_config_required')}</span>`}</span></div>
       <p class="small muted">${h.pricing.configured ? (h.pricing.rule.exclusive ? 'Exclusive allocation: each lead goes to one agency only.' : 'Shared allocation.') : 'Checkout: Not yet available.'}</p></div>
     <div class="card"><div class="stat"><span class="l">Billed Hot leads</span><span class="v">${fmtNum(h.ledger.length)}</span></div><p class="small muted">${fmtUSD(h.ledger.reduce((s, l) => s + l.amount_cents, 0))} total</p></div>
   </div>
   <div class="grid g2" style="margin-top:16px">
     <div class="card"><h3>Live inquiries</h3><div class="table-wrap"><table><tbody>${h.recent.map((l) => `<tr class="click" data-href="#/crm/lead/${l.id}"><td><b>${esc(l.full_name)}</b><br><span class="small muted">${esc(l.source_detail)}</span></td><td>${esc(human(l.stage))}</td><td class="small">${fmtDT(l.created_at)}${!l.first_contacted_at && new Date(l.first_contact_due) < new Date() ? '<br><span class="badge bad">SLA missed</span>' : ''}</td></tr>`).join('') || '<tr><td class="empty">No Hot leads yet.</td></tr>'}</tbody></table></div></div>
-    <div class="card"><h3>Capture leads on your own website</h3><p class="small muted">Leads from your own site key go straight to your CRM (free, your own data) with consent evidence.</p>
-      ${h.site_keys.length ? `<div class="code">${esc(snippet)}</div>` : '<div class="banner warn">No site key issued yet — ask AI-HOME support to register your domain.</div>'}
+    <div class="card"><h3>Capture leads on your own website</h3><p class="small muted">Leads from your own site key go straight to your CRM (free, your own data) with consent evidence. Paste this code into your website where the form should appear.</p>
+      ${h.site_keys.length ? `<div class="code">${esc(snippet)}</div>` : '<div class="banner warn">No site key issued yet — ask AI-DATA support to register your domain.</div>'}
       <h3 style="margin-top:14px">Sources</h3>${h.sources.map((s) => `<div class="row" style="justify-content:space-between;padding:5px 0;border-top:1px solid var(--line)"><span>${esc(s.name)}</span>${statusBadge(s.status)}</div>`).join('')}</div>
   </div>`;
 }
@@ -656,7 +659,7 @@ async function viewBilling(_p, query) {
         <button class="btn gold" data-act="pay-cash" data-plan="${p.code}">${t('pay_cash')}</button></div></div>`).join('') : `<div class="card muted">Only the account owner or director can change the subscription.</div>`}</div>
   </div>
   ${b.cash_requests.length ? `<div class="card" style="margin-top:16px"><h3>Offline payment requests</h3><div class="table-wrap"><table><thead><tr><th>Reference</th><th>${t('plan')}</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>${t('date')}</th></tr></thead><tbody>${b.cash_requests.map((c) => `<tr><td class="mono"><b>${esc(c.reference)}</b></td><td>${esc(human(c.plan_code))}</td><td class="num">${fmtUSD(c.amount_cents)}</td><td><span class="badge ${c.status === 'VERIFIED' ? 'ok' : c.status === 'REJECTED' ? 'bad' : 'warn'}">${esc(human(c.status))}</span></td><td>${fmtDT(c.created_at)}</td></tr>`).join('')}</tbody></table></div>
-    <p class="small muted">Pay at the AI-HOME office or by bank transfer quoting the reference. Access is activated only after finance verifies receipt; you'll then get a single-use activation link at your Google email.</p></div>` : ''}
+    <p class="small muted">Pay at the AI-DATA office or by bank transfer quoting the reference. Access is activated only after finance verifies receipt; you'll then get a single-use activation link at your Google email.</p></div>` : ''}
   <div class="card" style="margin-top:16px"><h3>${t('payments')}</h3><div class="table-wrap"><table><thead><tr><th>${t('date')}</th><th>Method</th><th>Product</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>Receipt</th></tr></thead><tbody>${b.payments.map((p) => `<tr><td>${fmtDate(p.paid_at)}</td><td>${esc(human(p.provider))}</td><td>${esc(human(p.kind))}</td><td class="num">${fmtUSD(p.amount_cents)}</td><td><span class="badge ${p.status === 'COMPLETED' ? 'ok' : 'bad'}">${esc(human(p.status))}</span></td><td class="mono">${esc(p.receipt_no || '—')}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">—</td></tr>'}</tbody></table></div></div>
   ${state.me.demo_mode ? `<div class="card" style="margin-top:16px"><h3>DEMO: email outbox</h3><p class="small muted">In production these go to your Google email. Shown here only in DEMO mode.</p><div id="outbox"><button class="btn sm" data-act="outbox">Show my emails</button></div></div>` : ''}`;
 }
@@ -676,7 +679,7 @@ async function viewSettings() {
   <div class="grid g2" style="align-items:start">
     <div class="card grid"><label class="field">${t('language')}<select data-change="lang">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === state.lang ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="field">${t('timezone')}<input type="text" value="Asia/Dubai" disabled></label><p class="small muted">Cold quota days always follow Asia/Dubai.</p></div>
-    <div class="card"><h3>Privacy</h3><p class="small muted">${t('compliance_body')}</p><p class="small muted">Data-subject requests (access, correction, deletion, opt-out) are handled by AI-HOME and propagate to every CRM copy.</p></div>
+    <div class="card"><h3>Privacy</h3><p class="small muted">${t('compliance_body')}</p><p class="small muted">Data-subject requests (access, correction, deletion, opt-out) are handled by AI-DATA and propagate to every CRM copy.</p></div>
   </div>`;
 }
 
@@ -789,7 +792,12 @@ async function ownerHot() {
       <label class="check"><input type="checkbox" name="exclusive" checked> Exclusive allocation (one agency per lead)</label><button class="btn gold">Save & approve pricing</button></form>
     <form class="card grid" data-form="hot-grant" style="gap:10px"><h3>Grant Hot credits (after Hot payment)</h3><div class="row">${orgSel('org_id')}<input type="number" name="credits" min="1" required placeholder="Credits" style="max-width:140px"><button class="btn">Grant</button></div><p class="small muted">Recorded in the separate Hot ledger; never touches Cold quota.</p></form>
   </div>
-  <div class="card" style="margin-top:16px"><h3>AI-HOME Hot pool</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>${t('name')}</th><th>Interest</th><th>Consent</th><th>Received</th><th>Allocation</th></tr></thead><tbody>${h.pool.map((p) => { const i = JSON.parse(p.interest_json || '{}'); const c = JSON.parse(p.consent_json); return `<tr><td>${p.id}</td><td><b>${esc(p.full_name)}</b></td><td class="small">${esc([i.area, i.property_type, i.bedrooms && i.bedrooms + 'BR'].filter(Boolean).join(' · '))}</td><td class="small">${c.contact ? '✓ contact' : ''} ${c.marketing ? '· ✓ marketing' : ''}</td><td>${fmtDT(p.received_at)}</td><td>${p.allocated_org_id ? `<span class="badge ok">Org #${p.allocated_org_id}</span>` : `<form class="row" data-form="hot-allocate" data-id="${p.id}">${orgSel('org_id')}<button class="btn sm">Allocate</button></form>`}</td></tr>`; }).join('') || '<tr><td colspan="6" class="empty">No pool leads yet.</td></tr>'}</tbody></table></div></div>`;
+  <div class="card" style="margin-top:16px"><h3>Website lead forms</h3>
+    <p class="small muted">Every website that sends leads needs a key. A key for the <b>AI-DATA Hot pool</b> collects leads that you allocate to paying agencies; an agency key sends leads straight to that agency's CRM. Paste the code into the website where the form should appear.</p>
+    <form class="row" data-form="site-key-create" style="margin-bottom:12px"><input type="text" name="label" required maxlength="120" placeholder="Website name, e.g. ai-home.world" aria-label="Website name" style="max-width:240px"><input type="url" name="allowed_origin" placeholder="https://www.ai-home.world (optional)" aria-label="Allowed website address" style="max-width:280px"><select name="org_id" aria-label="Leads go to" style="width:auto"><option value="">AI-DATA Hot pool</option>${orgs.map((o) => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select><button class="btn gold">Create key</button></form>
+    ${h.site_keys.map((k) => `<div style="border-top:1px solid var(--line);padding:10px 0"><div class="row"><b>${esc(k.label)}</b><span class="badge ${k.org_id ? '' : 'hot'}">${k.org_id ? esc(k.org_name || `Org #${k.org_id}`) : 'AI-DATA Hot pool'}</span>${k.allowed_origin ? `<span class="small muted">only ${esc(k.allowed_origin)}</span>` : ''}<div class="spacer"></div><button class="btn sm ghost" data-act="site-key-revoke" data-key="${esc(k.key)}">Revoke</button></div>
+      <div class="code" style="margin-top:6px">${esc(embedSnippet(k.key))}</div></div>`).join('') || '<div class="empty">No website keys yet.</div>'}</div>
+  <div class="card" style="margin-top:16px"><h3>AI-DATA Hot pool</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>${t('name')}</th><th>Interest</th><th>Consent</th><th>Received</th><th>Allocation</th></tr></thead><tbody>${h.pool.map((p) => { const i = JSON.parse(p.interest_json || '{}'); const c = JSON.parse(p.consent_json); return `<tr><td>${p.id}</td><td><b>${esc(p.full_name)}</b></td><td class="small">${esc([i.area, i.property_type, i.bedrooms && i.bedrooms + 'BR'].filter(Boolean).join(' · '))}</td><td class="small">${c.contact ? '✓ contact' : ''} ${c.marketing ? '· ✓ marketing' : ''}</td><td>${fmtDT(p.received_at)}</td><td>${p.allocated_org_id ? `<span class="badge ok">Org #${p.allocated_org_id}</span>` : `<form class="row" data-form="hot-allocate" data-id="${p.id}">${orgSel('org_id')}<button class="btn sm">Allocate</button></form>`}</td></tr>`; }).join('') || '<tr><td colspan="6" class="empty">No pool leads yet.</td></tr>'}</tbody></table></div></div>`;
 }
 
 async function ownerGovernance() {
@@ -843,10 +851,11 @@ const actions = {
   'remove-member': async (el) => { if (confirm('Remove this member?')) { await api('DELETE', `/api/org/members/${el.dataset.id}`); render(); } },
   'pay-paypal': async (el) => { try { const r = await POST('/api/billing/paypal', { plan: el.dataset.plan }); if (r.approve_url) location.href = r.approve_url; } catch (e) { toast(errMsg(e), true); } },
   'pay-cash': async (el) => {
-    const note = prompt('Optional note for AI-HOME finance (e.g. where/when you will pay):') ?? '';
+    const note = prompt('Optional note for AI-DATA finance (e.g. where/when you will pay):') ?? '';
     try { const r = await POST('/api/billing/cash', { plan: el.dataset.plan, note }); toast(`Payment reference ${r.reference} — pending verification`); render(); } catch (e) { toast(errMsg(e), true); }
   },
   outbox: async () => { const m = await GET('/api/demo/outbox'); document.getElementById('outbox').innerHTML = m.map((x) => `<div class="code" style="margin-bottom:8px"><b>${esc(x.subject)}</b>\n${esc(x.body).replace(/(#\/activate\/[\w-]+)/, '<a href="$1">$1</a>')}</div>`).join('') || '<span class="muted">—</span>'; },
+  'site-key-revoke': async (el) => { if (confirm('Revoke this key? Forms using it will stop sending leads.')) { await POST(`/api/owner/hot/site-keys/${encodeURIComponent(el.dataset.key)}/revoke`); render(); } },
   'reject-cash': async (el) => { if (confirm('Reject this payment request?')) { await POST(`/api/owner/cash/${el.dataset.id}/reject`); render(); } },
   reissue: async (el) => { try { await withMfa(() => POST(`/api/owner/subscriptions/${el.dataset.id}/reissue-link`)); toast('New link sent; previous link revoked'); } catch (e) { toast(errMsg(e), true); } },
   'owner-more': async () => { const o = state.owner; const r = await POST('/api/owner/cold/search', { filter: o.filter, cursor: o.cursor, limit: 50 }); o.results.push(...r.results); o.cursor = r.next_cursor; render(); },
@@ -921,6 +930,10 @@ const forms = {
   },
   'hot-pricing': async (f) => { await withMfa(() => POST('/api/owner/hot/pricing', { model: f.model.value, price_usd: Number(f.price_usd.value), exclusive: f.exclusive.checked })); toast('Pricing saved'); render(); },
   'hot-grant': async (f) => { await withMfa(() => POST('/api/owner/hot/entitlements', { org_id: Number(f.org_id.value), credits: Number(f.credits.value) })); toast('Credits granted'); render(); },
+  'site-key-create': async (f) => {
+    const r = await POST('/api/owner/hot/site-keys', { label: f.label.value, allowed_origin: f.allowed_origin.value || undefined, org_id: f.org_id.value ? Number(f.org_id.value) : null });
+    toast(`Website key created: ${r.key}`); render();
+  },
   'hot-allocate': async (f) => { await POST(`/api/owner/hot/pool/${f.dataset.id}/allocate`, { org_id: Number(f.org_id.value) }); toast('Allocated'); render(); },
 };
 

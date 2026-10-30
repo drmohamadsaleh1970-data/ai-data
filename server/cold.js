@@ -313,7 +313,7 @@ function upsertColdIntoCrm(conn, { orgId, investor, assignee, dueAt, campaignTag
       interest_json, campaign_tag, first_contact_due, created_at, updated_at) VALUES (?,?,'COLD','COLD_AI_HOME_HISTORY',?, 'NEW', ?, ?, ?, ?, ?, ?)`)
     .run(orgId, contact.id, COLD_LABEL, assignee, JSON.stringify({ historical_transactions: txns }), campaignTag ?? null, dueAt, ts, ts).lastInsertRowid);
   conn.prepare('INSERT INTO lead_activity (org_id, lead_id, user_id, type, body, created_at) VALUES (?,?,?,?,?,?)')
-    .run(orgId, leadId, userId, 'COLD_TRANSFER', `Transferred from AI-HOME historical database (job ${jobId}). ${txns.length} historical transaction(s) linked.`, ts);
+    .run(orgId, leadId, userId, 'COLD_TRANSFER', `Transferred from the ai-home.world investor history (job ${jobId}). ${txns.length} historical transaction(s) linked.`, ts);
   const title = investor.marketing_permission === 'GRANTED'
     ? 'Follow up historical investor (marketing permission on record)'
     : 'Review historical record & establish lawful basis before any outreach';

@@ -14,9 +14,9 @@ export function seedBase() {
   // Person-level subscriber transfer stays OFF until legal approval is recorded.
   db.prepare("INSERT OR IGNORE INTO feature_flag (key, enabled, note, updated_at) VALUES ('COLD_SUBSCRIBER_TRANSFER', 0, 'Enable only after documented legal/rights approval', ?)").run(iso());
   const src = db.prepare(`INSERT INTO hot_lead_source (code, name, category, status, allows_resale, isolation_required, requirements) VALUES (?,?,?,?,?,?,?)
-    ON CONFLICT(code) DO NOTHING`);
+    ON CONFLICT(code) DO UPDATE SET name = excluded.name, requirements = excluded.requirements`);
   [
-    ['AIHOME_WEB_FORM', 'AI-HOME.WORLD inquiry forms', 'First-party', 'CONNECTED', 1, 0, 'Built in. Consent captured on the form; leads land in the AI-HOME Hot pool.'],
+    ['AIHOME_WEB_FORM', 'ai-home.world inquiry forms', 'First-party', 'CONNECTED', 1, 0, 'Built in. Consent captured on the form; leads land in the AI-DATA Hot pool.'],
     ['AGENCY_WEB_FORM', 'Agency website forms (site key)', 'First-party', 'CONNECTED', 0, 0, 'Built in. Embed the form with your agency site key; leads go only to your CRM.'],
     ['META_LEAD_ADS', 'Meta Facebook / Instagram Lead Ads', 'Social ads', 'NOT_CONNECTED', 0, 0, 'Meta app, Page access, leads_retrieval permission, leadgen webhook subscription.'],
     ['GOOGLE_ADS', 'Google Ads lead form assets', 'Search ads', 'NOT_CONNECTED', 0, 0, 'Google Ads account, lead form webhook URL + key.'],
@@ -27,7 +27,6 @@ export function seedBase() {
     ['BAYUT', 'Bayut Leads API', 'Portal', 'NOT_CONNECTED', 0, 1, 'Bayut agency account with Leads API entitlement.'],
     ['DUBIZZLE', 'Dubizzle', 'Portal', 'NOT_CONNECTED', 0, 1, 'Approved partner integration or authorized notification parsing.'],
   ].forEach((s) => src.run(...s));
-  db.prepare("INSERT OR IGNORE INTO site_key (key, org_id, label) VALUES ('aihome-public', NULL, 'ai-home.world')").run();
 }
 
 // Deterministic PRNG so demo data and tests are reproducible.
@@ -92,8 +91,8 @@ export function seedDemo({ investors = 600 } = {}) {
 
   const user = (sub, email, name, role = null, mfa = null) => Number(db.prepare('INSERT INTO platform_user (google_sub, email, name, platform_role, mfa_secret, created_at) VALUES (?,?,?,?,?,?)')
     .run(`demo|${sub}`, email, name, role, mfa, ts).lastInsertRowid);
-  user('owner', 'owner@demo.ai-home.world', 'Platform Owner (DEMO)', 'PLATFORM_OWNER', DEMO_TOTP_SECRET);
-  user('finance', 'finance@demo.ai-home.world', 'Finance Admin (DEMO)', 'PLATFORM_FINANCE_ADMIN', DEMO_TOTP_SECRET);
+  user('owner', 'owner@demo.ai-data.example', 'Platform Owner (DEMO)', 'PLATFORM_OWNER', DEMO_TOTP_SECRET);
+  user('finance', 'finance@demo.ai-data.example', 'Finance Admin (DEMO)', 'PLATFORM_FINANCE_ADMIN', DEMO_TOTP_SECRET);
   const director = user('director', 'director@marinacrest.example', 'Dana Director (DEMO)');
   const leader = user('leader', 'leader@marinacrest.example', 'Tom Teamlead (DEMO)');
   const agent1 = user('agent1', 'agent1@marinacrest.example', 'Aisha Agent (DEMO)');
@@ -122,6 +121,8 @@ export function seedDemo({ investors = 600 } = {}) {
   member(agency, agent2, 'AGENT');
   activeSub(agency, 'AGENCY_MONTHLY', 99900);
   db.prepare("INSERT INTO site_key (key, org_id, label) VALUES ('marinacrest-demo-site', ?, 'marinacrest.example')").run(agency);
+  // Demo-only platform key (Hot pool). Real keys are created by the owner under Hot Leads.
+  db.prepare("INSERT OR IGNORE INTO site_key (key, org_id, label) VALUES ('aihome-public', NULL, 'ai-home.world (DEMO)')").run();
   const soloOrg = org('Sam Solo Properties (DEMO)', 'AGENT', solo);
   activeSub(soloOrg, 'AGENT_MONTHLY', 9900);
   const pendingOrg = org('Palm Gate Homes (DEMO)', 'AGENCY', pending);

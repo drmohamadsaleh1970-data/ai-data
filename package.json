@@ -1,8 +1,8 @@
 {
-  "name": "ai-home-portal",
+  "name": "ai-data",
   "version": "0.1.0",
   "private": true,
-  "description": "AI-HOME.WORLD integrated portal: Cold Data subscriptions, Hot Leads, multilingual CRM",
+  "description": "AI-DATA portal: Cold Data subscriptions, Hot Leads, multilingual CRM",
   "type": "module",
   "engines": {
     "node": "22.x"

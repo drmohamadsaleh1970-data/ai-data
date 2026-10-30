@@ -1,6 +1,37 @@
 # Data source: ai-home.world
 
-This portal is a **standalone application**. It is not embedded in or deployed to www.ai-home.world. It takes only one thing from ai-home.world: the **investor history data** (historical buyer/seller transactions and, where available, contact details). Everything else lives here: accounts, subscriptions, billing, quota, CRM, Hot Leads and the owner console.
+AI-DATA is a **standalone application**. It is not embedded in or deployed to www.ai-home.world. It takes only one thing from ai-home.world: the **investor history data** (historical buyer/seller transactions and, where available, contact details). Everything else lives here: accounts, subscriptions, billing, quota, CRM, Hot Leads and the owner console.
+
+## Step by step: import the investor history
+
+**A. Get the data out of ai-home.world**
+1. From ai-home.world's admin panel or database, export the investor-history table as **XLSX or CSV**.
+2. Keep the column names shown on ai-home.world/investor-history: `Country, City, AreaNameEn, PropertyTypeEn, Client Role, Client name, NATIONALITY, Master Developer, Project Name, Size(M2), Price/ProcedureValue, Registration_Date`.
+3. Add these columns too if ai-home.world has them: **transaction ID**, **Email**, **Mobile/Phone**, **WhatsApp**. Without phone or email, subscribers get history but cannot contact anyone.
+
+**B. Import it into AI-DATA**
+1. Sign in as the **platform owner**. In the demo this is the *Platform Owner* persona; in production it is your Google account after `npm run bootstrap-owner`.
+2. Go to **Owner console → ai-home.world data import**.
+3. Choose the file and click **Preview mapping**. Check that every column maps to a field and look at any rejected rows.
+4. Click **Import** and enter your MFA code. Importing the same file again is safe: it updates rows and never duplicates them.
+
+**C. Release the data to subscribers** (only with a documented legal basis)
+1. Go to **Owner console → Rights & governance**.
+2. Click **Approve rights** for *ai-home.world investor-history*.
+3. When legal approval for person-level transfers is recorded, enable the **COLD_SUBSCRIBER_TRANSFER** flag.
+
+Until steps C.2 and C.3 are done, subscribers see only restricted, masked records and cannot transfer any.
+
+**Limits on the current Vercel site**
+- **File size:** Vercel accepts uploads up to 4.5 MB, and the file is sent base64-encoded (about a third larger). Keep each file under about **3 MB**; split a large export, for example by year.
+- **Storage:** the Vercel demo stores data in temporary storage that is wiped whenever Vercel restarts the server. Import real data only after moving to permanent hosting (see *Deploying to Vercel* in `README.md`).
+
+**Automatic sync instead of files**
+1. Give ai-home.world a private, read-only JSON endpoint that follows the contract below.
+2. In Vercel, go to **Settings → Environment Variables**, add `AIHOME_SOURCE_URL` and `AIHOME_SOURCE_TOKEN`, then redeploy.
+3. Click **Sync now** on the import page.
+
+Scheduled sync (`AIHOME_SYNC_MINUTES`) needs an always-on server; Vercel functions do not run timers. Very large syncs may exceed the function's time limit, so run those from an always-on server too.
 
 ## How data comes in
 

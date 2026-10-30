@@ -81,12 +81,13 @@ The unique keys `record_acquisition_grant(org_id, investor_id)` and `cold_transf
 | POST `/api/billing/cash` `{plan, note}` | billing.manage | Creates a `PENDING_PAYMENT` request with a reference |
 | POST `/api/billing/activate` `{token}` | session | Single use, expires, bound to the issuing user |
 | POST `/api/webhooks/paypal` | PayPal | Signature verified through PayPal's API, deduplicated, ordering-safe |
-| POST `/api/public/inquiry` + `X-Site-Key` | public | Consent required, rate limited, honeypot, deduplicated |
+| POST `/api/public/inquiry` + `X-Site-Key` | public, CORS `*` | Consent required, rate limited, honeypot, deduplicated, optional allowed origin per key. Used by `public/lead-form.js` and Zapier/Make (see `docs/HOT_LEADS.md`) |
 | POST `/api/public/search-event` | public | Anonymous aggregate only. Needs analytics consent. |
 | POST `/api/owner/cold-exports` `{filter, fields}` | OWNER + MFA | Streams an XLSX with watermark and manifest sheet |
 | GET `/api/owner/cold-exports/:id` | OWNER + MFA | Download (audited) |
 | POST `/api/owner/cash/:id/verify` `{amount_usd, paid_on, channel, receipt_no}` | OWNER/FINANCE + MFA | Issues the magic link |
 | POST `/api/owner/hot/pricing` · `/hot/entitlements` · `/hot/pool/:id/allocate` | OWNER (+MFA) | |
+| POST `/api/owner/hot/site-keys` `{label, org_id?, allowed_origin?}` · `/hot/site-keys/:key/revoke` | OWNER | Website keys: no org = AI-DATA Hot pool, org = that agency's CRM |
 | POST `/api/owner/provenance/:id/review` · `/investors/:id/suppress` · `/flags` | OWNER (+MFA) | |
 | GET `/api/owner/source` · POST `/api/owner/source/preview` `{file_base64, file_name}` | OWNER | ai-home.world import status, mapping preview |
 | POST `/api/owner/source/import` · POST `/api/owner/source/sync` | OWNER + MFA | Import a file or pull from the API (idempotent) |

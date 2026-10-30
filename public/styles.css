@@ -56,7 +56,7 @@ h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -.01
 .btn.block { width: 100%; justify-content: center; }
 @media (prefers-color-scheme: dark) { .btn.primary { background: #e7ecf2; color: #0d1b2a; border-color: #e7ecf2; } }
 label.field { display: grid; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
-input[type=text], input[type=email], input[type=number], input[type=date], input[type=datetime-local], input[type=password], select, textarea {
+input[type=text], input[type=email], input[type=url], input[type=number], input[type=date], input[type=datetime-local], input[type=password], select, textarea {
   width: 100%; border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 9px 11px; font-weight: 500; color: var(--text); }
 select[multiple] { min-height: 92px; padding: 6px; }
 input:focus, select:focus, textarea:focus, .btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }

@@ -436,7 +436,7 @@ CREATE TABLE IF NOT EXISTS hot_lead_billing_ledger (
 );
 CREATE TABLE IF NOT EXISTS site_key (
   key TEXT PRIMARY KEY,
-  org_id INTEGER,                 -- NULL = AI-HOME owned site (goes to Hot pool)
+  org_id INTEGER,                 -- NULL = platform key (goes to the AI-DATA Hot pool)
   label TEXT NOT NULL,
   allowed_origin TEXT
 );
