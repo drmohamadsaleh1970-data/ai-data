@@ -38,7 +38,7 @@ const locale = () => ({ en: 'en-GB', ar: 'ar-AE', fr: 'fr-FR', ru: 'ru-RU', tr: 
 const TZ = 'Asia/Dubai';
 const fmtNum = (n) => (n == null ? '—' : new Intl.NumberFormat(locale()).format(n));
 const fmtAED = (n) => (n == null ? '—' : new Intl.NumberFormat(locale(), { style: 'currency', currency: 'AED', maximumFractionDigits: 0 }).format(n));
-const fmtUSD = (cents) => (cents == null ? '—' : new Intl.NumberFormat(locale(), { style: 'currency', currency: 'USD', maximumFractionDigits: cents % 100 ? 2 : 0 }).format(cents / 100));
+const fmtMoney = (cents) => (cents == null ? '—' : new Intl.NumberFormat(locale(), { style: 'currency', currency: 'AED', maximumFractionDigits: cents % 100 ? 2 : 0 }).format(cents / 100));
 const fmtDate = (s) => (s ? new Intl.DateTimeFormat(locale(), { dateStyle: 'medium', timeZone: TZ }).format(new Date(s)) : '—');
 const fmtDT = (s) => (s ? new Intl.DateTimeFormat(locale(), { dateStyle: 'medium', timeStyle: 'short', timeZone: TZ }).format(new Date(s)) : '—');
 const human = (s) => (s ? String(s).replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()) : '—');
@@ -76,8 +76,10 @@ async function withMfa(fn) {
     await new Promise((resolve, reject) => {
       openModal(`<h2>${t('verify_identity')}</h2><p class="muted">${t('mfa_prompt')}</p>
         <form id="mfa-form" class="grid"><input type="text" inputmode="numeric" maxlength="6" name="code" autocomplete="one-time-code" required placeholder="123456">
-        <div class="row"><button class="btn primary">${t('verify')}</button><button type="button" class="btn ghost" id="mfa-cancel">${t('cancel')}</button></div></form>`);
+        <div class="row"><button class="btn primary">${t('verify')}</button><button type="button" class="btn ghost" id="mfa-cancel">${t('cancel')}</button>
+        ${state.me.demo_mode && state.me.user?.platform_role ? '<button type="button" class="btn sm" id="mfa-demo">DEMO: fill code</button>' : ''}</div></form>`);
       document.getElementById('mfa-cancel').onclick = () => { closeModal(); reject(new Error('MFA cancelled')); };
+      document.getElementById('mfa-demo')?.addEventListener('click', async () => { try { document.querySelector('#mfa-form [name=code]').value = (await GET('/api/demo/totp')).code; } catch (err) { toast(errMsg(err), true); } });
       document.getElementById('mfa-form').onsubmit = async (ev) => {
         ev.preventDefault();
         try { await POST('/api/me/mfa/verify', { code: ev.target.code.value }); closeModal(); resolve(); } catch (err) { toast(errMsg(err), true); }
@@ -189,7 +191,8 @@ function shell(name, parts, content) {
     : '';
   const q = m.entitlements?.cold?.quota;
   const quota = q ? `<div class="quota-pill" title="${esc(t('resets_midnight'))}">❄ ${fmtNum(q.committed_used)} / ${fmtNum(q.plan_limit)}<span class="bar"><i style="width:${Math.min(100, (q.committed_used / q.plan_limit) * 100)}%"></i></span><span class="hide-sm">${fmtNum(q.remaining)} ${t('remaining')}</span></div>` : '';
-  return `<div class="shell">
+  return `${m.demo_mode ? `<div class="demo-strip">${t('demo_banner')}</div>` : ''}
+  <div class="shell">
     <aside class="side">${logo(true)}${nav}
       <div class="spacer"></div>
       <div class="small" style="padding:10px;color:#8193a8">${esc(m.user.name)}<br>${esc(m.user.email)}${m.user.platform_role ? `<br><span class="badge gold" style="margin-top:6px">${esc(human(m.user.platform_role))}</span>` : ''}${org ? `<br><span class="badge" style="margin-top:6px">${esc(human(org.role))}</span>` : ''}</div>
@@ -215,10 +218,11 @@ async function viewLanding() {
   const langSel = `<select data-change="lang" style="width:auto">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === state.lang ? 'selected' : ''}>${v}</option>`).join('')}</select>`;
   const card = (p) => `<div class="price-card ${p.code === 'AGENCY_MONTHLY' ? 'featured' : ''}">
       <div class="row"><h3 style="font-size:22px;font-family:var(--display)">${esc(p.name)}</h3>${p.code === 'AGENCY_MONTHLY' ? '<span class="badge gold">Agencies</span>' : '<span class="badge">Independent agents</span>'}</div>
-      <div><span class="price">${fmtUSD(p.price_usd_cents)}</span> <span class="muted">${t('per_month')}</span></div>
+      <div><span class="price">${fmtMoney(p.price_usd_cents)}</span> <span class="muted">${t('per_month')}</span></div>
       <ul><li><b>${fmtNum(p.cold_daily_limit)}</b>&nbsp;${t('cold_per_day')}</li><li>${t('unlimited_members')}</li><li>${t('shared_quota')}</li><li>${t('full_crm')}</li><li>${t('crm_only')}</li><li class="no">${t('hot_not_included')}</li></ul>
       <a class="btn ${p.code === 'AGENCY_MONTHLY' ? 'gold' : 'primary'} block" href="#/signin">${t('continue_google')}</a></div>`;
-  return `<nav class="pub-nav">${logo()}<div class="spacer"></div><a href="#pricing" class="hide-sm" style="text-decoration:none;font-weight:600">${t('pricing')}</a>${langSel}<a class="btn primary" href="#/signin">${t('sign_in')}</a></nav>
+  return `${state.cfg.demo_mode ? `<div class="demo-strip">${t('demo_banner')}</div>` : ''}
+  <nav class="pub-nav">${logo()}<div class="spacer"></div><a href="#pricing" class="hide-sm" style="text-decoration:none;font-weight:600">${t('pricing')}</a>${langSel}<a class="btn primary" href="#/signin">${t('sign_in')}</a></nav>
   <section class="hero">
     <div><div class="kicker">${t('hero_kicker')}</div><h1>${t('hero_title')}</h1><p>${t('hero_sub')}</p>
       <div class="row" style="margin-top:24px"><a class="btn gold" href="#/signin">${t('get_started')}</a><a class="btn" href="#pricing">${t('pricing')}</a></div></div>
@@ -235,7 +239,7 @@ async function viewLanding() {
     <div class="grid g3">${plans.map(card).join('')}
       <div class="price-card hot"><div class="row"><h3 style="font-size:22px;font-family:var(--display)">${t('hot_priced_separately')}</h3></div>
         <p class="muted" style="margin:0">${t('hot_desc')}</p>
-        ${hot.configured ? `<div><span class="price">${fmtUSD(hot.rule.price_cents)}</span> <span class="muted">${human(hot.rule.model)}</span></div>` : `<span class="badge warn">${t('owner_config_required')}</span>`}
+        ${hot.configured ? `<div><span class="price">${fmtMoney(hot.rule.price_cents)}</span> <span class="muted">${human(hot.rule.model)}</span></div>` : `<span class="badge warn">${t('owner_config_required')}</span>`}
         <ul><li>Consent evidence on every lead</li><li>Instant agent alert + response SLA</li><li>Separate ledger — never uses Cold quota</li></ul>
         <a class="btn block" href="#/signin">${t('sign_in')}</a></div>
     </div></section>
@@ -252,6 +256,12 @@ async function viewLanding() {
 
 async function viewSignIn() {
   const c = state.cfg;
+  const personas = [
+    ['owner', 'Platform Owner', 'Owner console, unmasked data, XLSX export'], ['finance', 'Finance Admin', 'Verify cash, activation links'],
+    ['director', 'Agency Director', 'Agency AED 999 · 999/day shared'], ['leader', 'Team Leader', 'Agency team oversight'],
+    ['agent1', 'Agent (Aisha)', 'Agency agent'], ['agent2', 'Agent (Leo)', 'Agency agent'], ['solo', 'Solo Agent', 'Agent AED 99 · 99/day'],
+    ['pending', 'Pending cash customer', 'Awaiting offline payment'], ['newuser', 'New visitor', 'Onboarding from scratch'],
+  ];
   const pendingActivation = safeGet('aih_pending_activation');
   return `<div class="auth-wrap"><div class="auth-card">
     <div style="text-align:center">${logo()}</div>
@@ -261,6 +271,8 @@ async function viewSignIn() {
       ${c.google_client_id ? '<div id="gsi-btn" style="min-height:44px"></div>' : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`}
       <p class="small muted">We only use your Google identity (name, email, account ID). We never request access to your inbox.</p>
     </div>
+    ${c.demo_mode ? `<div class="card grid"><div class="row"><h3 style="margin:0">Sign in as</h3><span class="badge warn">DEMO · fictional</span></div>
+      ${personas.map(([k, n, d]) => `<button class="persona" data-act="demo-login" data-persona="${k}"><span class="avatar">${n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>` : ''}
     <a href="#/" class="small muted" style="text-align:center">← AI-DATA</a>
   </div></div>`;
 }
@@ -293,7 +305,7 @@ async function viewOnboarding() {
   return `<div class="page-head"><div><div class="kicker">Step 1 of 2</div><h1>${t('create_org')}</h1></div></div>
   <form class="card grid" data-form="create-org" style="max-width:760px">
     <div class="grid g2">${plans.map((p, i) => `<label class="persona" style="cursor:pointer"><input type="radio" name="plan" value="${p.code}" ${i === 0 ? 'checked' : ''}>
-      <span><b>${esc(p.name)} · ${fmtUSD(p.price_usd_cents)}${t('per_month')}</b><br><span class="small muted">${fmtNum(p.cold_daily_limit)} ${t('cold_per_day')} · ${t('unlimited_members')}</span></span></label>`).join('')}</div>
+      <span><b>${esc(p.name)} · ${fmtMoney(p.price_usd_cents)}${t('per_month')}</b><br><span class="small muted">${fmtNum(p.cold_daily_limit)} ${t('cold_per_day')} · ${t('unlimited_members')}</span></span></label>`).join('')}</div>
     <div class="grid g2">
       <label class="field">${t('org_name')}<input type="text" name="name" required maxlength="120"></label>
       <label class="field">${t('business_contact')}<input type="text" name="business_contact" maxlength="120"></label>
@@ -524,9 +536,9 @@ async function viewHot() {
   <div class="banner hot" style="margin-bottom:16px">🔥 Hot Leads are a separate product with a separate ledger. They never use your Cold allowance, and your Cold plan does not include them.</div>
   <div class="grid g3">
     <div class="card"><div class="stat hot"><span class="l">${t('hot_balance')}</span><span class="v">${fmtNum(ent)}</span></div></div>
-    <div class="card"><div class="stat"><span class="l">AI-DATA Hot pricing</span><span class="v" style="font-size:20px">${h.pricing.configured ? `${fmtUSD(h.pricing.rule.price_cents)} · ${esc(human(h.pricing.rule.model))}` : `<span class="badge warn">${t('owner_config_required')}</span>`}</span></div>
+    <div class="card"><div class="stat"><span class="l">AI-DATA Hot pricing</span><span class="v" style="font-size:20px">${h.pricing.configured ? `${fmtMoney(h.pricing.rule.price_cents)} · ${esc(human(h.pricing.rule.model))}` : `<span class="badge warn">${t('owner_config_required')}</span>`}</span></div>
       <p class="small muted">${h.pricing.configured ? (h.pricing.rule.exclusive ? 'Exclusive allocation: each lead goes to one agency only.' : 'Shared allocation.') : 'Checkout: Not yet available.'}</p></div>
-    <div class="card"><div class="stat"><span class="l">Billed Hot leads</span><span class="v">${fmtNum(h.ledger.length)}</span></div><p class="small muted">${fmtUSD(h.ledger.reduce((s, l) => s + l.amount_cents, 0))} total</p></div>
+    <div class="card"><div class="stat"><span class="l">Billed Hot leads</span><span class="v">${fmtNum(h.ledger.length)}</span></div><p class="small muted">${fmtMoney(h.ledger.reduce((s, l) => s + l.amount_cents, 0))} total</p></div>
   </div>
   <div class="grid g2" style="margin-top:16px">
     <div class="card"><h3>Live inquiries</h3><div class="table-wrap"><table><tbody>${h.recent.map((l) => `<tr class="click" data-href="#/crm/lead/${l.id}"><td><b>${esc(l.full_name)}</b><br><span class="small muted">${esc(l.source_detail)}</span></td><td>${esc(human(l.stage))}</td><td class="small">${fmtDT(l.created_at)}${!l.first_contacted_at && new Date(l.first_contact_due) < new Date() ? '<br><span class="badge bad">SLA missed</span>' : ''}</td></tr>`).join('') || '<tr><td class="empty">No Hot leads yet.</td></tr>'}</tbody></table></div></div>
@@ -641,14 +653,14 @@ async function viewBilling(_p, query) {
       ${e.active ? `<div class="kv"><span class="k">${t('plan')}</span><span class="v">${esc(e.plan_name)}</span><span class="k">${t('status')}</span><span class="v"><span class="badge ok">Active</span></span><span class="k">${t('renews')}</span><span class="v">${fmtDate(e.period_end)}</span><span class="k">Method</span><span class="v">${esc(human(e.provider))}</span></div>`
         : `<div class="banner warn">${t('no_active_plan')}${e.latest ? ` · last status: <b>${esc(human(e.latest.status))}</b>` : ''}</div>`}
       <h3 style="margin-top:16px">Policy</h3><ul class="small muted" style="margin:0;padding-inline-start:18px">${Object.values(b.policy).filter((x) => typeof x === 'string').map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
-    <div class="grid">${manage ? plans.plans.map((p) => `<div class="card ${pre === p.code ? '' : ''}" style="${pre === p.code ? 'border:2px solid var(--gold)' : ''}"><div class="row"><h3 style="margin:0">${esc(p.name)} · ${fmtUSD(p.price_usd_cents)}${t('per_month')}</h3></div>
+    <div class="grid">${manage ? plans.plans.map((p) => `<div class="card ${pre === p.code ? '' : ''}" style="${pre === p.code ? 'border:2px solid var(--gold)' : ''}"><div class="row"><h3 style="margin:0">${esc(p.name)} · ${fmtMoney(p.price_usd_cents)}${t('per_month')}</h3></div>
         <p class="small muted">${fmtNum(p.cold_daily_limit)} ${t('cold_per_day')} · ${t('unlimited_members')} · ${t('crm_only')}</p>
         <div class="row"><button class="btn" data-act="pay-paypal" data-plan="${p.code}" ${b.paypal_connected ? '' : 'disabled'}>${t('pay_paypal')}</button>${b.paypal_connected ? '' : `<span class="badge bad">PayPal ${t('not_connected')}</span>`}
         <button class="btn gold" data-act="pay-cash" data-plan="${p.code}">${t('pay_cash')}</button></div></div>`).join('') : `<div class="card muted">Only the account owner or director can change the subscription.</div>`}</div>
   </div>
-  ${b.cash_requests.length ? `<div class="card" style="margin-top:16px"><h3>Offline payment requests</h3><div class="table-wrap"><table><thead><tr><th>Reference</th><th>${t('plan')}</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>${t('date')}</th></tr></thead><tbody>${b.cash_requests.map((c) => `<tr><td class="mono"><b>${esc(c.reference)}</b></td><td>${esc(human(c.plan_code))}</td><td class="num">${fmtUSD(c.amount_cents)}</td><td><span class="badge ${c.status === 'VERIFIED' ? 'ok' : c.status === 'REJECTED' ? 'bad' : 'warn'}">${esc(human(c.status))}</span></td><td>${fmtDT(c.created_at)}</td></tr>`).join('')}</tbody></table></div>
+  ${b.cash_requests.length ? `<div class="card" style="margin-top:16px"><h3>Offline payment requests</h3><div class="table-wrap"><table><thead><tr><th>Reference</th><th>${t('plan')}</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>${t('date')}</th></tr></thead><tbody>${b.cash_requests.map((c) => `<tr><td class="mono"><b>${esc(c.reference)}</b></td><td>${esc(human(c.plan_code))}</td><td class="num">${fmtMoney(c.amount_cents)}</td><td><span class="badge ${c.status === 'VERIFIED' ? 'ok' : c.status === 'REJECTED' ? 'bad' : 'warn'}">${esc(human(c.status))}</span></td><td>${fmtDT(c.created_at)}</td></tr>`).join('')}</tbody></table></div>
     <p class="small muted">Pay at the AI-DATA office or by bank transfer quoting the reference. Access is activated only after finance verifies receipt; AI-DATA finance then sends you a single-use activation link by WhatsApp or email.</p></div>` : ''}
-  <div class="card" style="margin-top:16px"><h3>${t('payments')}</h3><div class="table-wrap"><table><thead><tr><th>${t('date')}</th><th>Method</th><th>Product</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>Receipt</th></tr></thead><tbody>${b.payments.map((p) => `<tr><td>${fmtDate(p.paid_at)}</td><td>${esc(human(p.provider))}</td><td>${esc(human(p.kind))}</td><td class="num">${fmtUSD(p.amount_cents)}</td><td><span class="badge ${p.status === 'COMPLETED' ? 'ok' : 'bad'}">${esc(human(p.status))}</span></td><td class="mono">${esc(p.receipt_no || '—')}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">—</td></tr>'}</tbody></table></div></div>
+  <div class="card" style="margin-top:16px"><h3>${t('payments')}</h3><div class="table-wrap"><table><thead><tr><th>${t('date')}</th><th>Method</th><th>Product</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>Receipt</th></tr></thead><tbody>${b.payments.map((p) => `<tr><td>${fmtDate(p.paid_at)}</td><td>${esc(human(p.provider))}</td><td>${esc(human(p.kind))}</td><td class="num">${fmtMoney(p.amount_cents)}</td><td><span class="badge ${p.status === 'COMPLETED' ? 'ok' : 'bad'}">${esc(human(p.status))}</span></td><td class="mono">${esc(p.receipt_no || '—')}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">—</td></tr>'}</tbody></table></div></div>
 `;
 }
 
@@ -685,10 +697,10 @@ async function viewOwner([sub = 'dashboard']) {
   const d = await GET('/api/owner/dashboard');
   return `<div class="page-head"><div><div class="kicker">${t('owner_console')}</div><h1>${t('owner_dashboard')}</h1></div></div>
   <div class="grid g4">
-    <div class="card"><div class="stat"><span class="l">MRR (verified)</span><span class="v">${fmtUSD(d.mrr_cents)}</span></div><p class="small muted">${esc(d.mrr_basis)}</p></div>
+    <div class="card"><div class="stat"><span class="l">MRR (verified)</span><span class="v">${fmtMoney(d.mrr_cents)}</span></div><p class="small muted">${esc(d.mrr_basis)}</p></div>
     <div class="card"><div class="stat"><span class="l">Active by plan</span><span class="v" style="font-size:20px">${Object.entries(d.active_by_plan).map(([k, v]) => `${esc(human(k))}: ${v}`).join('<br>') || '—'}</span></div></div>
-    <div class="card"><div class="stat"><span class="l">Cold revenue this month</span><span class="v">${fmtUSD(d.revenue_this_month.filter((r) => r.kind === 'COLD_SUBSCRIPTION').reduce((s, r) => s + r.collected, 0))}</span></div><p class="small muted">${d.revenue_this_month.map((r) => `${esc(human(r.provider))}: ${fmtUSD(r.collected)}`).join(' · ') || '—'}</p></div>
-    <div class="card"><div class="stat hot"><span class="l">Hot revenue this month (separate)</span><span class="v">${fmtUSD(d.hot_revenue_this_month.cents)}</span></div><p class="small muted">${d.hot_revenue_this_month.leads} leads billed</p></div>
+    <div class="card"><div class="stat"><span class="l">Cold revenue this month</span><span class="v">${fmtMoney(d.revenue_this_month.filter((r) => r.kind === 'COLD_SUBSCRIPTION').reduce((s, r) => s + r.collected, 0))}</span></div><p class="small muted">${d.revenue_this_month.map((r) => `${esc(human(r.provider))}: ${fmtMoney(r.collected)}`).join(' · ') || '—'}</p></div>
+    <div class="card"><div class="stat hot"><span class="l">Hot revenue this month (separate)</span><span class="v">${fmtMoney(d.hot_revenue_this_month.cents)}</span></div><p class="small muted">${d.hot_revenue_this_month.leads} leads billed</p></div>
   </div>
   <div class="grid g3" style="margin-top:16px">
     <div class="card"><div class="stat"><span class="l">Pending cash</span><span class="v">${d.pending_cash.length}</span></div><a href="#/owner/finance" class="small">${t('finance')} →</a></div>
@@ -704,9 +716,9 @@ async function ownerFinance() {
   return `<div class="page-head"><div><div class="kicker">${t('owner_console')}</div><h1>${t('finance')}</h1></div></div>
   <div class="banner warn" style="margin-bottom:16px">Verify only money actually received. A customer's screenshot is a claim, not a receipt. Approvals require MFA and are audited.</div>
   <div class="card"><h3>Pending cash / offline payments</h3>${d.pending_cash.map((c) => `<form class="grid" data-form="verify-cash" data-id="${c.id}" style="border-top:1px solid var(--line);padding:12px 0;gap:10px">
-      <div class="row"><b class="mono">${esc(c.reference)}</b><span>${esc(c.org_name)}</span><span class="badge">${esc(human(c.plan_code))}</span><span class="badge gold">${fmtUSD(c.amount_cents)}</span><span class="small muted">${esc(c.requested_by_email)} · ${fmtDT(c.created_at)}</span></div>
+      <div class="row"><b class="mono">${esc(c.reference)}</b><span>${esc(c.org_name)}</span><span class="badge">${esc(human(c.plan_code))}</span><span class="badge gold">${fmtMoney(c.amount_cents)}</span><span class="small muted">${esc(c.requested_by_email)} · ${fmtDT(c.created_at)}</span></div>
       ${c.customer_note ? `<div class="small muted">“${esc(c.customer_note)}”</div>` : ''}
-      <div class="grid g4" style="gap:8px"><label class="field">Amount received (USD)<input type="number" name="amount_usd" step="0.01" min="0" required></label><label class="field">Paid on<input type="date" name="paid_on" required></label>
+      <div class="grid g4" style="gap:8px"><label class="field">Amount received (AED)<input type="number" name="amount_aed" step="0.01" min="0" required></label><label class="field">Paid on<input type="date" name="paid_on" required></label>
         <label class="field">Channel<select name="channel"><option value="CASH_OFFICE">Cash at office</option><option value="BANK_TRANSFER">Bank transfer</option><option value="CHEQUE">Cheque</option></select></label><label class="field">Receipt no.<input type="text" name="receipt_no" required maxlength="60"></label></div>
       <div class="row"><button class="btn gold">Verify receipt & create activation link</button><button type="button" class="btn ghost" data-act="reject-cash" data-id="${c.id}">Reject</button></div></form>`).join('') || '<div class="empty">No pending offline payments.</div>'}</div>
   <div class="card" style="margin-top:16px"><h3>Awaiting activation</h3>${d.awaiting_activation.map((s) => `<div class="row" style="border-top:1px solid var(--line);padding:8px 0"><span>${esc(s.org_name)} · ${esc(human(s.plan_code))} · ${fmtDT(s.created_at)}</span><div class="spacer"></div><button class="btn sm" data-act="reissue" data-id="${s.id}">Reissue link</button></div>`).join('') || '<div class="muted">—</div>'}</div>`;
@@ -787,8 +799,8 @@ async function ownerHot() {
   const orgSel = (name) => `<select name="${name}" style="width:auto">${orgs.map((o) => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select>`;
   return `<div class="page-head"><div><div class="kicker">${t('owner_console')}</div><h1>${t('hot_admin')}</h1></div></div>
   <div class="grid g2" style="align-items:start">
-    <form class="card grid" data-form="hot-pricing" style="gap:10px"><h3>Pricing</h3>${h.pricing.configured ? `<div class="banner ok">Active: ${fmtUSD(h.pricing.rule.price_cents)} · ${esc(human(h.pricing.rule.model))} · ${h.pricing.rule.exclusive ? 'exclusive' : 'shared'}</div>` : `<div class="banner warn">${t('owner_config_required')} — checkout and allocation are disabled.</div>`}
-      <div class="grid g2" style="gap:8px"><label class="field">Model<select name="model"><option value="PER_LEAD">Per lead</option><option value="PREPAID_CREDITS">Prepaid credits</option><option value="MONTHLY_ALLOCATION">Monthly allocation</option><option value="CAMPAIGN_BUDGET">Campaign budget</option></select></label><label class="field">Price (USD)<input type="number" name="price_usd" min="0.01" step="0.01" required></label></div>
+    <form class="card grid" data-form="hot-pricing" style="gap:10px"><h3>Pricing</h3>${h.pricing.configured ? `<div class="banner ok">Active: ${fmtMoney(h.pricing.rule.price_cents)} · ${esc(human(h.pricing.rule.model))} · ${h.pricing.rule.exclusive ? 'exclusive' : 'shared'}</div>` : `<div class="banner warn">${t('owner_config_required')} — checkout and allocation are disabled.</div>`}
+      <div class="grid g2" style="gap:8px"><label class="field">Model<select name="model"><option value="PER_LEAD">Per lead</option><option value="PREPAID_CREDITS">Prepaid credits</option><option value="MONTHLY_ALLOCATION">Monthly allocation</option><option value="CAMPAIGN_BUDGET">Campaign budget</option></select></label><label class="field">Price (AED)<input type="number" name="price_aed" min="0.01" step="0.01" required></label></div>
       <label class="check"><input type="checkbox" name="exclusive" checked> Exclusive allocation (one agency per lead)</label><button class="btn gold">Save & approve pricing</button></form>
     <form class="card grid" data-form="hot-grant" style="gap:10px"><h3>Grant Hot credits (after Hot payment)</h3><div class="row">${orgSel('org_id')}<input type="number" name="credits" min="1" required placeholder="Credits" style="max-width:140px"><button class="btn">Grant</button></div><p class="small muted">Recorded in the separate Hot ledger; never touches Cold quota.</p></form>
   </div>
@@ -822,6 +834,7 @@ const actions = {
   close: () => closeModal(),
   'close-nav': (el) => { closeModal(); go(el.getAttribute('href')); },
   'close-refresh': () => { closeModal(); render(); },
+  'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
   logout: async () => { await POST('/api/auth/logout'); state.cfg = null; state.ih = { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null }; go('#/'); },
   notifs: async () => {
     const ex = document.getElementById('notif-dd');
@@ -926,10 +939,10 @@ const forms = {
   'lead-task': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/tasks`, { title: f.title.value, due_at: new Date(f.due_at.value).toISOString() }); toast('✓'); render(); },
   invite: async (f) => { await POST('/api/org/invitations', { email: f.email.value, role: f.role.value }); toast('Invitation recorded ✓'); render(); },
   'verify-cash': async (f) => {
-    const r = await withMfa(() => POST(`/api/owner/cash/${f.dataset.id}/verify`, { amount_usd: Number(f.amount_usd.value), paid_on: f.paid_on.value, channel: f.channel.value, receipt_no: f.receipt_no.value }));
+    const r = await withMfa(() => POST(`/api/owner/cash/${f.dataset.id}/verify`, { amount_aed: Number(f.amount_aed.value), paid_on: f.paid_on.value, channel: f.channel.value, receipt_no: f.receipt_no.value }));
     showActivationLink(r);
   },
-  'hot-pricing': async (f) => { await withMfa(() => POST('/api/owner/hot/pricing', { model: f.model.value, price_usd: Number(f.price_usd.value), exclusive: f.exclusive.checked })); toast('Pricing saved'); render(); },
+  'hot-pricing': async (f) => { await withMfa(() => POST('/api/owner/hot/pricing', { model: f.model.value, price_aed: Number(f.price_aed.value), exclusive: f.exclusive.checked })); toast('Pricing saved'); render(); },
   'hot-grant': async (f) => { await withMfa(() => POST('/api/owner/hot/entitlements', { org_id: Number(f.org_id.value), credits: Number(f.credits.value) })); toast('Credits granted'); render(); },
   'site-key-create': async (f) => {
     const r = await POST('/api/owner/hot/site-keys', { label: f.label.value, allowed_origin: f.allowed_origin.value || undefined, org_id: f.org_id.value ? Number(f.org_id.value) : null });

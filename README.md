@@ -2,7 +2,7 @@
 
 A **standalone** portal. It does not run inside www.ai-home.world. It imports only the **investor history data** from ai-home.world (by file or API; see `DATA_SOURCE.md`) and provides everything else itself:
 
-- **Cold Data subscriptions**: Agency at USD 999/month with 999 records a day, and Agent at USD 99/month with 99 a day. Both have unlimited members sharing one allowance that resets at 00:00 Asia/Dubai. Records move into the CRM only.
+- **Cold Data subscriptions**: Agency at AED 999/month with 999 records a day, and Agent at AED 99/month with 99 a day. Both have unlimited members sharing one allowance that resets at 00:00 Asia/Dubai. Records move into the CRM only.
 - A separately billed **Hot Leads** product.
 - A multilingual **CRM** in English, Arabic (RTL), French, Russian and Turkish.
 

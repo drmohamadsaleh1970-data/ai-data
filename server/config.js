@@ -5,6 +5,11 @@ export const config = {
   baseUrl: env.BASE_URL || `http://localhost:${env.PORT || 3000}`,
   production: env.NODE_ENV === 'production',
   secureCookies: env.NODE_ENV === 'production',
+  // DEMO mode adds "sign in as" demo personas with fictional data. On a production host
+  // it also needs ALLOW_PUBLIC_DEMO=true, so it is never switched on there by accident.
+  get demoMode() {
+    return env.DEMO_MODE === 'true' && (env.NODE_ENV !== 'production' || env.ALLOW_PUBLIC_DEMO === 'true');
+  },
   googleClientId: env.GOOGLE_CLIENT_ID || '',
   paypal: {
     env: env.PAYPAL_ENV || 'sandbox',

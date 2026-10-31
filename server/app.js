@@ -60,7 +60,7 @@ export function createApp(options = {}) {
   r.get('/auth/config', (req, res) => {
     const nonce = randomToken(16);
     res.cookie('aih_nonce', nonce, { httpOnly: true, sameSite: 'lax', secure: config.secureCookies, maxAge: 10 * 60_000, path: '/' });
-    res.json({ google_client_id: config.googleClientId || null, nonce, paypal_connected: paypalConfigured() });
+    res.json({ google_client_id: config.googleClientId || null, nonce, demo_mode: config.demoMode, paypal_connected: paypalConfigured() });
   });
   r.post('/auth/google', ok(async (req, res) => {
     const ident = await verifyGoogleCredential(String(req.body.credential || ''), readCookie(req, 'aih_nonce'));
@@ -69,6 +69,21 @@ export function createApp(options = {}) {
     createSession(res, userId);
     audit({ actor: userId, action: 'LOGIN_GOOGLE' });
     return { ok: true };
+  }));
+  // "Sign in as" a demo persona. Only exists while DEMO_MODE is on.
+  r.post('/auth/demo', ok((req, res) => {
+    if (!config.demoMode) throw new HttpError(404, 'NOT_FOUND');
+    const u = getDb().prepare("SELECT * FROM platform_user WHERE google_sub = ? AND google_sub LIKE 'demo|%'").get(`demo|${req.body.persona}`);
+    if (!u) throw new HttpError(404, 'UNKNOWN_PERSONA');
+    crm.acceptInvitations(u);
+    createSession(res, u.id);
+    audit({ actor: u.id, action: 'LOGIN_DEMO' });
+    return { ok: true };
+  }));
+  // Fills the MFA code for demo personas only (they have no authenticator app).
+  r.get('/demo/totp', requireUser, ok((req) => {
+    if (!config.demoMode || !req.user.mfa_secret || !String(req.user.google_sub).startsWith('demo|')) throw new HttpError(404, 'NOT_FOUND');
+    return { code: totp(req.user.mfa_secret) };
   }));
   if (options.testLogin) {
     r.post('/test/login', ok((req, res) => {
@@ -98,6 +113,7 @@ export function createApp(options = {}) {
       permissions: req.membership ? ROLE_PERMISSIONS[req.membership.role] : [],
       entitlements: req.membership ? entitlementSummary(req.membership.org_id) : null,
       unread_notifications: db.prepare('SELECT COUNT(*) AS n FROM notification WHERE user_id = ? AND read_at IS NULL').get(req.user.id).n,
+      demo_mode: config.demoMode,
     };
   }));
   r.post('/me/active-org', requireUser, ok((req) => {
@@ -220,7 +236,7 @@ export function createApp(options = {}) {
     res.download(f.file, f.name, { dotfiles: 'allow' });
   });
   r.post('/owner/cash/:id/verify', FINANCE, requireRecentMfa, ok((req) => billing.verifyCash({
-    requestId: req.params.id, approver: req.user, amountCents: Math.round(Number(req.body.amount_usd) * 100), currency: req.body.currency || 'USD',
+    requestId: req.params.id, approver: req.user, amountCents: Math.round(Number(req.body.amount_aed ?? req.body.amount_usd) * 100), currency: req.body.currency || 'AED',
     paidOn: req.body.paid_on, channel: req.body.channel, receiptNo: req.body.receipt_no, baseUrl: publicBase(req),
   })));
   r.post('/owner/cash/:id/reject', FINANCE, ok((req) => {
@@ -233,7 +249,7 @@ export function createApp(options = {}) {
   r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources(), site_keys: hot.siteKeys() })));
   r.post('/owner/hot/site-keys', OWNER, ok((req) => hot.createSiteKey({ actor: req.user, orgId: req.body.org_id || null, label: req.body.label, allowedOrigin: req.body.allowed_origin })));
   r.post('/owner/hot/site-keys/:key/revoke', OWNER, ok((req) => hot.revokeSiteKey({ actor: req.user, key: req.params.key })));
-  r.post('/owner/hot/pricing', OWNER, requireRecentMfa, ok((req) => hot.configurePricing({ actor: req.user, model: req.body.model, priceCents: Math.round(Number(req.body.price_usd) * 100), exclusive: req.body.exclusive !== false })));
+  r.post('/owner/hot/pricing', OWNER, requireRecentMfa, ok((req) => hot.configurePricing({ actor: req.user, model: req.body.model, priceCents: Math.round(Number(req.body.price_aed ?? req.body.price_usd) * 100), exclusive: req.body.exclusive !== false })));
   r.post('/owner/hot/entitlements', OWNER, requireRecentMfa, ok((req) => hot.grantEntitlement({ actor: req.user, orgId: req.body.org_id, credits: Number(req.body.credits) })));
   r.post('/owner/hot/pool/:id/allocate', OWNER, ok((req) => hot.allocate({ actor: req.user, poolId: req.params.id, orgId: req.body.org_id })));
   // ai-home.world investor-data source (import only; this portal is standalone).

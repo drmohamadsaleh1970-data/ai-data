@@ -14,10 +14,12 @@ async function init() {
   const { getDb } = await import('../server/db.js');
   const { seedBase, ensureOwner } = await import('../server/seed.js');
   const { createApp } = await import('../server/app.js');
+  const { config } = await import('../server/config.js');
   const crm = await import('../server/crm.js');
   getDb();
   seedBase();
   ensureOwner();
+  if (config.demoMode) (await import('../server/demo.js')).seedDemo();
   return { app: createApp(), runSlaSweep: crm.runSlaSweep };
 }
 

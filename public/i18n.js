@@ -158,6 +158,7 @@ const S = {
   continue: ['Continue', 'متابعة', 'Continuer', 'Продолжить', 'Devam'],
   notifications: ['Notifications', 'الإشعارات', 'Notifications', 'Уведомления', 'Bildirimler'],
   mark_read: ['Mark all read', 'تعليم الكل كمقروء', 'Tout marquer lu', 'Отметить прочитанным', 'Tümünü okundu say'],
+  demo_banner: ['DEMO MODE — all people and transactions shown are fictional.', 'وضع تجريبي — جميع الأشخاص والمعاملات وهمية.', 'MODE DÉMO — données fictives.', 'ДЕМО — все данные вымышлены.', 'DEMO — tüm veriler kurgusaldır.'],
   verify_identity: ['Verify it’s you', 'تحقق من هويتك', 'Vérifiez votre identité', 'Подтвердите личность', 'Kimliğinizi doğrulayın'],
   mfa_prompt: ['Enter the 6-digit code from your authenticator app.', 'أدخل الرمز المكون من 6 أرقام من تطبيق المصادقة.', 'Saisissez le code à 6 chiffres.', 'Введите 6-значный код.', '6 haneli kodu girin.'],
   verify: ['Verify', 'تحقق', 'Vérifier', 'Подтвердить', 'Doğrula'],

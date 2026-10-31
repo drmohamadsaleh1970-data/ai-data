@@ -2,15 +2,17 @@ import { createApp } from './app.js';
 import { config } from './config.js';
 import { getDb } from './db.js';
 import { seedBase, ensureOwner } from './seed.js';
+import { seedDemo } from './demo.js';
 import { runSlaSweep } from './crm.js';
 import { syncFromApi } from './source-aihome.js';
 
 getDb();
 seedBase();
 ensureOwner();
+if (config.demoMode) seedDemo();
 const app = createApp();
 app.listen(config.port, () => {
-  console.log(`AI-DATA portal on ${config.baseUrl}`);
+  console.log(`AI-DATA portal on ${config.baseUrl}${config.demoMode ? '  [DEMO MODE — sign-in-as personas, fictional data]' : ''}`);
 });
 
 // SLA escalation worker. In production run this in a separate worker process

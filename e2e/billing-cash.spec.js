@@ -21,7 +21,7 @@ test('offline payment stays pending until finance verifies it; the magic link ac
   await signIn(finance, 'finance');
   await finance.goto('/#/owner/finance');
   const request = finance.locator('form').filter({ hasText: ref });
-  await request.getByLabel('Amount received (USD)').fill('999');
+  await request.getByLabel('Amount received (AED)').fill('999');
   await request.getByLabel('Paid on').fill('2026-10-30');
   await request.getByLabel('Receipt no.').fill(`E2E-${ref}`);
   await request.getByRole('button', { name: 'Verify receipt & create activation link' }).click();

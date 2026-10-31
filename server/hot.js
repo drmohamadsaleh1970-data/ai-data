@@ -15,7 +15,7 @@ export function pricing() {
     : { configured: false, status: 'OWNER_CONFIGURATION_REQUIRED', message: 'Hot Leads pricing has not been configured by the platform owner. Checkout is not yet available.' };
 }
 
-export function configurePricing({ actor, model, priceCents, currency = 'USD', exclusive = true }) {
+export function configurePricing({ actor, model, priceCents, currency = 'AED', exclusive = true }) {
   if (!['PER_LEAD', 'PREPAID_CREDITS', 'MONTHLY_ALLOCATION', 'CAMPAIGN_BUDGET'].includes(model)) throw new HttpError(400, 'INVALID_MODEL');
   if (!Number.isInteger(priceCents) || priceCents <= 0) throw new HttpError(400, 'INVALID_PRICE');
   const id = Number(getDb().prepare('INSERT INTO hot_lead_pricing_rule (model, price_cents, currency, exclusive, approved, configured_by, created_at) VALUES (?,?,?,?,1,?,?)')

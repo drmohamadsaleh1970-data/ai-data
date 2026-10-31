@@ -209,6 +209,7 @@ html[dir=rtl] #toast { transform: translateX(50%); }
 .scorebar { height: 8px; border-radius: 8px; background: var(--muted-bg); overflow: hidden; width: 120px; }
 .scorebar i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), #d9b56d); }
 .code { background: var(--muted-bg); border-radius: 10px; padding: 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.avatar { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--gold-soft); color: var(--gold); flex: none; }
 .persona { display: flex; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); cursor: pointer; text-align: start; width: 100%; }
 .persona:hover { border-color: var(--gold); }
 .auth-wrap { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
@@ -220,3 +221,5 @@ html[dir=rtl] #toast { transform: translateX(50%); }
 .masked, .mono, .quota-pill, .kv .v, td.num { unicode-bidi: isolate; }
 .masked, .mono, .quota-pill { direction: ltr; }
 .kv .k::first-letter { text-transform: uppercase; }
+
+.demo-strip { background: repeating-linear-gradient(45deg, var(--warn-bg), var(--warn-bg) 12px, transparent 12px, transparent 24px), var(--warn-bg); color: var(--warn); font-weight: 700; font-size: 12px; text-align: center; padding: 5px 10px; }

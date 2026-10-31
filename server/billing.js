@@ -144,7 +144,7 @@ function applyPaypalEvent(conn, event) {
       if (dup) return 'DUPLICATE_PAYMENT';
       const cents = Math.round(Number(r.amount?.total || 0) * 100);
       conn.prepare(`INSERT INTO payment (org_id, subscription_id, provider, amount_cents, currency, status, external_id, receipt_no, paid_at, created_at)
-        VALUES (?,?, 'PAYPAL', ?, ?, 'COMPLETED', ?, ?, ?, ?)`).run(sub.org_id, sub.id, cents, r.amount?.currency || 'USD', r.id, r.id, evTime, ts);
+        VALUES (?,?, 'PAYPAL', ?, ?, 'COMPLETED', ?, ?, ?, ?)`).run(sub.org_id, sub.id, cents, r.amount?.currency || 'AED', r.id, r.id, evTime, ts);
       const base = sub.current_period_end && sub.current_period_end > evTime ? sub.current_period_end : evTime;
       const end = sub.status === 'ACTIVE' && sub.current_period_end && sub.current_period_end > evTime ? sub.current_period_end : addMonth(new Date(base)).toISOString();
       if (['PAST_DUE', 'ACTIVE', 'PENDING_PAYMENT'].includes(sub.status)) setStatus(sub.status === 'PENDING_PAYMENT' ? 'PENDING_PAYMENT' : 'ACTIVE', { end });
@@ -185,15 +185,15 @@ export function requestCash({ orgId, planCode, user, note }) {
   const p = plan(planCode);
   const reference = 'AIH-' + randomToken(5).toUpperCase().replace(/[^A-Z0-9]/g, 'X').slice(0, 7);
   const id = Number(getDb().prepare(`INSERT INTO cash_payment_request (org_id, plan_code, amount_cents, currency, reference, status, requested_by, customer_note, created_at)
-    VALUES (?,?,?,'USD',?,'PENDING_PAYMENT',?,?,?)`).run(orgId, planCode, p.price_usd_cents, reference, user.id, note?.slice(0, 500) ?? null, iso()).lastInsertRowid);
+    VALUES (?,?,?,'AED',?,'PENDING_PAYMENT',?,?,?)`).run(orgId, planCode, p.price_usd_cents, reference, user.id, note?.slice(0, 500) ?? null, iso()).lastInsertRowid);
   audit({ actor: user.id, org: orgId, action: 'CASH_REQUEST_CREATED', target: `cash:${id}` });
   return getDb().prepare('SELECT * FROM cash_payment_request WHERE id = ?').get(id);
 }
 
-export function verifyCash({ requestId, approver, amountCents, currency = 'USD', paidOn, channel, receiptNo, baseUrl = config.baseUrl }) {
+export function verifyCash({ requestId, approver, amountCents, currency = 'AED', paidOn, channel, receiptNo, baseUrl = config.baseUrl }) {
   if (!Number.isInteger(amountCents) || amountCents <= 0) throw new HttpError(400, 'AMOUNT_REQUIRED');
   if (!paidOn || !channel || !receiptNo) throw new HttpError(400, 'RECEIPT_DETAILS_REQUIRED', 'Amount, paid date, channel and receipt number are required.');
-  if (currency !== 'USD') throw new HttpError(400, 'CURRENCY_NOT_CONFIGURED', 'Only USD settlement is configured. Add a verified FX policy before accepting other currencies.');
+  if (currency !== 'AED') throw new HttpError(400, 'CURRENCY_NOT_CONFIGURED', 'Only AED settlement is configured. Add a verified FX policy before accepting other currencies.');
   return tx((conn) => {
     const req = conn.prepare('SELECT * FROM cash_payment_request WHERE id = ?').get(Number(requestId));
     if (!req) throw new HttpError(404, 'NOT_FOUND');

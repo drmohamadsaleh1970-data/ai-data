@@ -86,7 +86,7 @@ export function seedFixtures({ investors = 600 } = {}) {
     const start = new Date(now().getTime() - 5 * 86_400_000);
     const subId = Number(db.prepare(`INSERT INTO subscription (org_id, plan_code, status, provider, external_id, price_snapshot_cents, current_period_start, current_period_end, effective_at, created_at, updated_at)
       VALUES (?,?,'ACTIVE','CASH',?,?,?,?,?,?,?)`).run(orgId, planCode, `cash-TEST-${orgId}`, cents, start.toISOString(), addMonth(start).toISOString(), start.toISOString(), ts, ts).lastInsertRowid);
-    db.prepare("INSERT INTO payment (org_id, subscription_id, provider, amount_cents, currency, status, external_id, receipt_no, paid_at, created_at) VALUES (?,?,'CASH',?,'USD','COMPLETED',?,?,?,?)")
+    db.prepare("INSERT INTO payment (org_id, subscription_id, provider, amount_cents, currency, status, external_id, receipt_no, paid_at, created_at) VALUES (?,?,'CASH',?,'AED','COMPLETED',?,?,?,?)")
       .run(orgId, subId, cents, `TEST-${orgId}`, `RCPT-TEST-${orgId}`, start.toISOString(), ts);
   };
   const agency = org('Marina Crest Realty (TEST)', 'AGENCY', director);
@@ -100,7 +100,7 @@ export function seedFixtures({ investors = 600 } = {}) {
   activeSub(soloOrg, 'AGENT_MONTHLY', 9900);
   const pendingOrg = org('Palm Gate Homes (TEST)', 'AGENCY', pending);
   db.prepare("INSERT INTO cash_payment_request (org_id, plan_code, amount_cents, currency, reference, status, requested_by, customer_note, created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-    .run(pendingOrg, 'AGENCY_MONTHLY', 99900, 'USD', 'AIH-TEST01', 'PENDING_PAYMENT', pending, 'Will pay at the Business Bay office.', ts);
+    .run(pendingOrg, 'AGENCY_MONTHLY', 99900, 'AED', 'AIH-TEST01', 'PENDING_PAYMENT', pending, 'Will pay at the Business Bay office.', ts);
 
   const searches = [['Dubai Marina', 'Apartment', 2, 2000000], ['Downtown Dubai', 'Apartment', 1, 1800000], ['Palm Jumeirah', 'Villa', 4, 15000000], ['Dubai Hills Estate', 'Villa', 3, 6000000], ['Jumeirah Village Circle', 'Apartment', 1, 900000]];
   const se = db.prepare("INSERT INTO anonymous_search_event (site, event_type, city, area, property_type, bedrooms, budget_max_aed, purpose, created_at) VALUES ('ai-home.world','search_performed','Dubai',?,?,?,?,'buy',?)");

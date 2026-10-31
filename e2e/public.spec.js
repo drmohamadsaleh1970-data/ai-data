@@ -7,8 +7,8 @@ test('landing page shows both Cold plans and Hot Leads as separately priced', as
   await expect(page.getByRole('heading', { name: 'Know who bought before. Reach who is asking now.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Agency', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
-  await expect(page.getByText('US$999', { exact: true })).toBeVisible();
-  await expect(page.getByText('US$99', { exact: true })).toBeVisible();
+  await expect(page.getByText('AED 999', { exact: true })).toBeVisible();
+  await expect(page.getByText('AED 99', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Hot Leads (priced separately)' })).toBeVisible();
   await expect(page.getByText('Owner configuration required')).toBeVisible();
 });

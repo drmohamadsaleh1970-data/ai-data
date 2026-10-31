@@ -65,7 +65,7 @@ test('Hot monetization is gated until the owner configures pricing; allocation b
   assert.equal((await o.get('/api/public/plans')).data.hot.status, 'OWNER_CONFIGURATION_REQUIRED');
   assert.equal((await o.post(`/api/owner/hot/pool/${pool.data.pool_id}/allocate`, { org_id: srv.ids.agency })).data.error, 'OWNER_CONFIGURATION_REQUIRED');
   await o.mfa();
-  await o.post('/api/owner/hot/pricing', { model: 'PER_LEAD', price_usd: 25 });
+  await o.post('/api/owner/hot/pricing', { model: 'PER_LEAD', price_aed: 25 });
   assert.equal((await o.post(`/api/owner/hot/pool/${pool.data.pool_id}/allocate`, { org_id: srv.ids.agency })).data.error, 'NO_HOT_CREDITS', 'Cold plan does not include Hot');
   await o.post('/api/owner/hot/entitlements', { org_id: srv.ids.agency, credits: 10 });
   const a = await o.post(`/api/owner/hot/pool/${pool.data.pool_id}/allocate`, { org_id: srv.ids.agency });
