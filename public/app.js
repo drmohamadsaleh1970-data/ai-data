@@ -265,14 +265,14 @@ async function viewSignIn() {
   const pendingActivation = safeGet('aih_pending_activation');
   return `<div class="auth-wrap"><div class="auth-card">
     <div style="text-align:center">${logo()}</div>
+    ${c.demo_mode ? `<div class="card grid"><div class="row"><h3 style="margin:0">Sign in as</h3><span class="badge warn">DEMO · fictional</span></div>
+      ${personas.map(([k, n, d]) => `<button class="persona" data-act="demo-login" data-persona="${k}"><span class="avatar">${n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>` : ''}
     <div class="card grid">
       <h2>${t('sign_in')}</h2>
       ${pendingActivation ? `<div class="banner ok">Sign in with the Google account your activation email was sent to.</div>` : ''}
       ${c.google_client_id ? '<div id="gsi-btn" style="min-height:44px"></div>' : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`}
       <p class="small muted">We only use your Google identity (name, email, account ID). We never request access to your inbox.</p>
     </div>
-    ${c.demo_mode ? `<div class="card grid"><div class="row"><h3 style="margin:0">Sign in as</h3><span class="badge warn">DEMO · fictional</span></div>
-      ${personas.map(([k, n, d]) => `<button class="persona" data-act="demo-login" data-persona="${k}"><span class="avatar">${n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>` : ''}
     <a href="#/" class="small muted" style="text-align:center">← AI-DATA</a>
   </div></div>`;
 }
