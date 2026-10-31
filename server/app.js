@@ -223,6 +223,7 @@ export function createApp(options = {}) {
     return { otpauth_url: `otpauth://totp/AI-DATA:${encodeURIComponent(req.user.email)}?secret=${secret}&issuer=AI-DATA`, secret };
   }));
   r.get('/owner/dashboard', FINANCE, ok(() => owner.dashboard()));
+  r.post('/owner/cold/to-crm', OWNER, requireRecentMfa, ok((req) => cold.ownerToCrm({ actor: req.user, ids: req.body?.ids })));
   r.post('/owner/cold/search', OWNER, ok((req) => {
     audit({ actor: req.user.id, action: 'OWNER_PII_SEARCH', meta: { filter: req.body.filter } });
     return cold.search({ orgId: null, filter: req.body.filter, cursor: req.body.cursor, limit: req.body.limit, ownerView: true });

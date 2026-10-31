@@ -362,3 +362,54 @@ export function acquiredList(orgId) {
     LEFT JOIN crm_contact c ON c.org_id = g.org_id AND c.investor_id = g.investor_id
     WHERE g.org_id = ? ORDER BY g.granted_at DESC LIMIT 500`).all(orgId);
 }
+
+// --- Owner's own follow-up CRM -------------------------------------------------------------
+// The platform owner can send Master Cold database records straight into their own company
+// CRM ("AI-DATA owner CRM"). It is not a subscriber: no subscription, no daily allowance, no
+// charge. Opted-out (suppressed) records are skipped; every transfer is a logged job.
+export const OWNER_CRM_NAME = 'AI-DATA owner CRM';
+const MAX_OWNER_IDS = 500;
+
+export function ownerCrmOrg(conn, userId) {
+  const found = conn.prepare(`SELECT o.id FROM organization o JOIN membership m ON m.org_id = o.id AND m.user_id = o.owner_user_id
+    WHERE o.owner_user_id = ? AND o.name = ? AND m.status = 'ACTIVE' ORDER BY o.id LIMIT 1`).get(userId, OWNER_CRM_NAME);
+  if (found) return found.id;
+  const ts = iso();
+  const id = Number(conn.prepare("INSERT INTO organization (name, kind, owner_user_id, language, timezone, terms_accepted_at, created_at) VALUES (?, 'AGENCY', ?, 'en', 'Asia/Dubai', ?, ?)")
+    .run(OWNER_CRM_NAME, userId, ts, ts).lastInsertRowid);
+  conn.prepare("INSERT INTO membership (org_id, user_id, role, created_at) VALUES (?,?,'ORG_OWNER',?)").run(id, userId, ts);
+  audit({ actor: userId, org: id, action: 'OWNER_CRM_CREATED' });
+  return id;
+}
+
+export function ownerToCrm({ actor, ids }) {
+  const list = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Number.isInteger))];
+  if (!list.length) throw new HttpError(400, 'EMPTY_SELECTION', 'Tick at least one record.');
+  if (list.length > MAX_OWNER_IDS) throw new HttpError(400, 'SELECTION_TOO_LARGE', `Send at most ${MAX_OWNER_IDS} records at a time.`);
+  return tx((conn) => {
+    const orgId = ownerCrmOrg(conn, actor.id);
+    const ts = iso();
+    const day = dubaiDay();
+    const jobId = Number(conn.prepare(`INSERT INTO cold_transfer_job (org_id, user_id, idempotency_key, mode, requested, plan_code, local_day, status, created_at)
+      VALUES (?,?,?,'ids',?,'OWNER_CRM',?,'RUNNING',?)`).run(orgId, actor.id, `owner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, list.length, day, ts).lastInsertRowid);
+    const org = conn.prepare('SELECT first_contact_sla_minutes_cold FROM organization WHERE id = ?').get(orgId);
+    const dueAt = new Date(now().getTime() + org.first_contact_sla_minutes_cold * 60_000).toISOString();
+    const item = conn.prepare('INSERT INTO cold_transfer_item (job_id, investor_id, outcome, reason, charged, crm_lead_id) VALUES (?,?,?,?,0,?)');
+    const counts = { added: 0, already: 0, skipped: 0 };
+    for (const id of list) {
+      const inv = conn.prepare('SELECT id, full_name, email, phone, nationality, suppressed, marketing_permission FROM investor_contact WHERE id = ?').get(id);
+      if (!inv) { item.run(jobId, id, 'REJECTED', 'NOT_FOUND', null); counts.skipped++; continue; }
+      if (inv.suppressed) { item.run(jobId, id, 'REJECTED', 'SUPPRESSED_DO_NOT_CONTACT', null); counts.skipped++; continue; }
+      if (conn.prepare('SELECT 1 FROM record_acquisition_grant WHERE org_id = ? AND investor_id = ?').get(orgId, id)) {
+        item.run(jobId, id, 'ALREADY_ACQUIRED', null, null); counts.already++; continue;
+      }
+      conn.prepare('INSERT INTO record_acquisition_grant (org_id, investor_id, job_id, granted_by, local_day, granted_at) VALUES (?,?,?,?,?,?)').run(orgId, id, jobId, actor.id, day, ts);
+      const leadId = upsertColdIntoCrm(conn, { orgId, investor: inv, assignee: actor.id, dueAt, campaignTag: 'owner-follow-up', jobId, userId: actor.id });
+      item.run(jobId, id, 'TRANSFERRED', null, leadId); counts.added++;
+    }
+    conn.prepare("UPDATE cold_transfer_job SET accepted = ?, already_acquired = ?, rejected = ?, status = 'COMPLETED' WHERE id = ?")
+      .run(counts.added, counts.already, counts.skipped, jobId);
+    audit({ actor: actor.id, org: orgId, action: 'OWNER_COLD_TO_CRM', target: `job:${jobId}`, meta: counts });
+    return { org_id: orgId, job_id: jobId, ...counts };
+  });
+}

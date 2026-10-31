@@ -8,7 +8,7 @@ const state = {
   cfg: null,
   lang: safeGet('aih_lang') || (navigator.language || 'en').slice(0, 2),
   ih: { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null, transferEnabled: true },
-  owner: { filter: {}, results: [], counts: null, cursor: null },
+  owner: { filter: {}, results: [], counts: null, cursor: null, selected: new Set() },
 };
 if (!LANGS[state.lang]) state.lang = 'en';
 let t = translator(state.lang);
@@ -772,7 +772,8 @@ async function ownerData() {
     <details><summary class="small" style="cursor:pointer;font-weight:700">Export fields</summary><div class="grid" style="gap:4px;margin-top:8px">${fields.map((f) => `<label class="check"><input type="checkbox" name="field" value="${f}" checked> ${esc(f)}</label>`).join('')}</div></details>
     <button type="button" class="btn gold block" data-act="owner-export">⬇ ${t('export_xlsx')}</button><div id="export-result"></div></form>
   <div style="min-width:0"><div class="grid g4" style="margin-bottom:12px"><div class="card"><div class="stat"><span class="l">${t('matching')}</span><span class="v">${fmtNum(o.counts.total)}</span></div></div><div class="card"><div class="stat cold"><span class="l">${t('eligible')}</span><span class="v">${fmtNum(o.counts.eligible)}</span></div></div><div class="card"><div class="stat"><span class="l">${t('restricted')}</span><span class="v">${fmtNum(o.counts.restricted)}</span></div></div></div>
-    <div class="table-wrap"><table class="small"><thead><tr><th>ID</th><th>Registration date</th><th>Client role</th><th>Client name</th><th>Nationality</th><th>${t('phone')}</th><th>${t('email')}</th><th>Country</th><th>City</th><th>Area</th><th>Property type</th><th>Master developer</th><th>Project</th><th class="num">Size (m²)</th><th class="num">Price</th><th class="num">Price / m²</th><th class="num">Txns</th><th>Rights</th><th></th></tr></thead><tbody>${o.results.map((r) => `<tr><td class="mono">${r.id}</td><td style="white-space:nowrap">${fmtDate(r.last_registration_date)}</td><td>${esc(human(r.client_role || ''))}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.nationality || '—')}</td><td style="white-space:nowrap">${esc(r.phone || '—')}</td><td>${esc(r.email || '—')}</td><td>${esc(r.country || '—')}</td><td>${esc(r.city || '—')}</td><td>${esc(r.area || '—')}</td><td>${esc(r.property_type || '—')}</td><td>${esc(r.master_developer || '—')}</td><td>${esc(r.project || '—')}</td><td class="num">${r.size_m2 == null ? '—' : fmtNum(r.size_m2)}</td><td class="num" style="white-space:nowrap">${fmtAED(r.price_aed)}</td><td class="num" style="white-space:nowrap">${r.size_m2 && r.price_aed ? fmtAED(Math.round(r.price_aed / r.size_m2)) : '—'}</td><td class="num">${fmtNum(r.total_transactions)}</td><td><span class="badge ${r.rights_status === 'APPROVED' ? 'ok' : 'warn'}">${esc(human(r.rights_status))}</span></td><td><button class="btn sm ghost" data-act="suppress" data-id="${r.id}" title="Record a data-subject opt-out">Opt-out</button></td></tr>`).join('')}</tbody></table></div>
+    <div class="row" style="margin-bottom:10px;gap:8px;flex-wrap:wrap"><button class="btn gold" data-act="owner-to-crm" ${o.selected.size ? '' : 'disabled'}>➕ Add ${o.selected.size ? fmtNum(o.selected.size) + ' selected' : 'selected'} to my CRM</button>${o.selected.size ? '<button class="btn ghost sm" data-act="owner-clear-pick">Clear selection</button>' : ''}<button class="btn sm" data-act="open-owner-crm">Open my CRM →</button><span class="small muted">Tick rows, then add them as leads for your own follow-up.</span></div>
+    <div class="table-wrap"><table class="small"><thead><tr><th><input type="checkbox" data-change="owner-pick-all" title="Select all on this page" ${o.results.length && o.results.every((r) => o.selected.has(r.id)) ? 'checked' : ''}></th><th>ID</th><th>Registration date</th><th>Client role</th><th>Client name</th><th>Nationality</th><th>${t('phone')}</th><th>${t('email')}</th><th>Country</th><th>City</th><th>Area</th><th>Property type</th><th>Master developer</th><th>Project</th><th class="num">Size (m²)</th><th class="num">Price</th><th class="num">Price / m²</th><th class="num">Txns</th><th>Rights</th><th></th></tr></thead><tbody>${o.results.map((r) => `<tr><td><input type="checkbox" data-change="owner-pick" data-id="${r.id}" ${o.selected.has(r.id) ? 'checked' : ''}></td><td class="mono">${r.id}</td><td style="white-space:nowrap">${fmtDate(r.last_registration_date)}</td><td>${esc(human(r.client_role || ''))}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.nationality || '—')}</td><td style="white-space:nowrap">${esc(r.phone || '—')}</td><td>${esc(r.email || '—')}</td><td>${esc(r.country || '—')}</td><td>${esc(r.city || '—')}</td><td>${esc(r.area || '—')}</td><td>${esc(r.property_type || '—')}</td><td>${esc(r.master_developer || '—')}</td><td>${esc(r.project || '—')}</td><td class="num">${r.size_m2 == null ? '—' : fmtNum(r.size_m2)}</td><td class="num" style="white-space:nowrap">${fmtAED(r.price_aed)}</td><td class="num" style="white-space:nowrap">${r.size_m2 && r.price_aed ? fmtAED(Math.round(r.price_aed / r.size_m2)) : '—'}</td><td class="num">${fmtNum(r.total_transactions)}</td><td><span class="badge ${r.rights_status === 'APPROVED' ? 'ok' : 'warn'}">${esc(human(r.rights_status))}</span></td><td><button class="btn sm ghost" data-act="suppress" data-id="${r.id}" title="Record a data-subject opt-out">Opt-out</button></td></tr>`).join('')}</tbody></table></div>
     ${o.cursor ? `<div style="text-align:center;margin-top:12px"><button class="btn" data-act="owner-more">${t('load_more')}</button></div>` : ''}</div></div>`;
 }
 
@@ -855,6 +856,25 @@ const actions = {
   close: () => closeModal(),
   'close-nav': (el) => { closeModal(); go(el.getAttribute('href')); },
   'close-refresh': () => { closeModal(); render(); },
+  'owner-clear-pick': () => { state.owner.selected.clear(); render(); },
+  'owner-to-crm': async () => {
+    const ids = [...state.owner.selected];
+    if (!ids.length) return;
+    try {
+      const r = await withMfa(() => POST('/api/owner/cold/to-crm', { ids }));
+      state.owner.selected.clear(); state.owner.crmOrg = r.org_id;
+      toast(`✓ ${r.added} added to your CRM${r.already ? ` · ${r.already} already there` : ''}${r.skipped ? ` · ${r.skipped} skipped (opted out)` : ''}`);
+      render();
+    } catch (e) { toast(errMsg(e), true); }
+  },
+  'open-owner-crm': async () => {
+    try {
+      const me = state.me;
+      const org = state.owner.crmOrg || (me.organizations || me.memberships || []).find((m) => (m.name || m.org_name) === 'AI-DATA owner CRM')?.org_id;
+      if (!org) return toast('Add at least one record to your CRM first.', true);
+      await POST('/api/me/active-org', { org_id: Number(org) }); go('#/crm');
+    } catch (e) { toast(errMsg(e), true); }
+  },
   'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); render(); },
   'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
   logout: async () => { await POST('/api/auth/logout'); state.cfg = null; state.ih = { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null }; go('#/'); },
@@ -995,6 +1015,8 @@ document.addEventListener('change', async (e) => {
   if (!el) return;
   try {
     if (el.dataset.change === 'lang') { setLang(el.value); render(); }
+    if (el.dataset.change === 'owner-pick') { const id = Number(el.dataset.id); el.checked ? state.owner.selected.add(id) : state.owner.selected.delete(id); render(); }
+    if (el.dataset.change === 'owner-pick-all') { state.owner.results.forEach((r) => (el.checked ? state.owner.selected.add(r.id) : state.owner.selected.delete(r.id))); render(); }
     if (el.dataset.change === 'switch-org') { await POST('/api/me/active-org', { org_id: Number(el.value) }); state.ih.counts = null; state.ih.selected.clear(); go('#/overview'); }
     if (el.dataset.change === 'ih-preset' && el.value) { state.ih.filter = JSON.parse(el.value); await runSearch(false); render(); }
     if (el.dataset.change === 'lead-stage') { await api('PATCH', `/api/crm/leads/${el.dataset.id}`, { stage: el.value }); toast('✓'); render(); }
