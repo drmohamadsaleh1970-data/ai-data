@@ -24,6 +24,9 @@ export const config = {
   magicLinkTtlHours: Number(env.MAGIC_LINK_TTL_HOURS || 48),
   // The platform owner is defined by settings, so the account exists after every restart
   // and is linked to the owner's Google account on first sign-in (see seed.ensureOwner).
+  // Owner/finance actions ask for an authenticator code unless OWNER_MFA_REQUIRED=false.
+  // Switching it off means a signed-in owner session alone can import, export and verify payments.
+  get ownerMfaRequired() { return env.OWNER_MFA_REQUIRED !== 'false'; },
   get ownerEmail() { return (env.OWNER_EMAIL || '').trim().toLowerCase(); },
   get ownerTotpSecret() { return (env.OWNER_TOTP_SECRET || '').replace(/\s+/g, '').toUpperCase(); },
   // ai-home.world is the investor-data source only. Read lazily so tests and ops can

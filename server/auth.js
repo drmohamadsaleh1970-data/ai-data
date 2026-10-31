@@ -98,6 +98,7 @@ export function requirePlatformRole(...roles) {
 // Step-up MFA: owner exports and finance approvals need a TOTP verification in the
 // last 10 minutes on this session.
 export function requireRecentMfa(req, _res, next) {
+  if (!config.ownerMfaRequired) return next();
   const at = req.session?.mfa_verified_at;
   if (!at || now().getTime() - new Date(at).getTime() > MFA_WINDOW_MS) return next(new HttpError(401, 'MFA_REQUIRED'));
   next();
