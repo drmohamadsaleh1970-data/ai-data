@@ -2,8 +2,9 @@
 // /api/* request is rewritten here (see vercel.json) and handled by the Express app.
 //
 // Storage: without a persistent database the SQLite file lives in /tmp, which is
-// per-instance and wiped on cold starts. That is fine for a DEMO (fictional data,
-// re-seeded on start) but NOT for real customers — see README "Deploying to Vercel".
+// per-instance and wiped on cold starts. Reference data and the owner (from settings)
+// are recreated on every start; everything else is lost until permanent storage is
+// added — see README "Deploying to Vercel".
 let ready;
 let lastSweep = 0;
 
@@ -11,13 +12,12 @@ async function init() {
   process.env.DB_FILE ||= '/tmp/aihome.db';
   process.env.EXPORT_DIR ||= '/tmp/exports';
   const { getDb } = await import('../server/db.js');
-  const { seedBase, seedDemo } = await import('../server/seed.js');
-  const { config } = await import('../server/config.js');
+  const { seedBase, ensureOwner } = await import('../server/seed.js');
   const { createApp } = await import('../server/app.js');
   const crm = await import('../server/crm.js');
   getDb();
   seedBase();
-  if (config.demoMode) seedDemo();
+  ensureOwner();
   return { app: createApp(), runSlaSweep: crm.runSlaSweep };
 }
 

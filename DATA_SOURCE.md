@@ -10,7 +10,7 @@ AI-DATA is a **standalone application**. It is not embedded in or deployed to ww
 3. Add these columns too if ai-home.world has them: **transaction ID**, **Email**, **Mobile/Phone**, **WhatsApp**. Without phone or email, subscribers get history but cannot contact anyone.
 
 **B. Import it into AI-DATA**
-1. Sign in as the **platform owner**. In the demo this is the *Platform Owner* persona; in production it is your Google account after `npm run bootstrap-owner`.
+1. Sign in with Google as the **platform owner** (the address in `OWNER_EMAIL`).
 2. Go to **Owner console → ai-home.world data import**.
 3. Choose the file and click **Preview mapping**. Check that every column maps to a field and look at any rejected rows.
 4. Click **Import** and enter your MFA code. Importing the same file again is safe: it updates rows and never duplicates them.
@@ -24,7 +24,7 @@ Until steps C.2 and C.3 are done, subscribers see only restricted, masked record
 
 **Limits on the current Vercel site**
 - **File size:** Vercel accepts uploads up to 4.5 MB, and the file is sent base64-encoded (about a third larger). Keep each file under about **3 MB**; split a large export, for example by year.
-- **Storage:** the Vercel demo stores data in temporary storage that is wiped whenever Vercel restarts the server. Import real data only after moving to permanent hosting (see *Deploying to Vercel* in `README.md`).
+- **Storage:** the Vercel site currently stores data in temporary storage that is wiped whenever Vercel restarts the server. Import real data only after moving to permanent hosting (see *Deploying to Vercel* in `README.md`).
 
 **Automatic sync instead of files**
 1. Give ai-home.world a private, read-only JSON endpoint that follows the contract below.

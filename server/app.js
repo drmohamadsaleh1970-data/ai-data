@@ -18,7 +18,9 @@ import * as source from './source-aihome.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
 
-export function createApp() {
+// options.testLogin adds a sign-in for the automated tests' fictional personas. The
+// production entry points (api/index.js, server/index.js) never pass it.
+export function createApp(options = {}) {
   const app = express();
   app.locals.ORG_ROLES = ORG_ROLES;
   app.disable('x-powered-by');
@@ -46,6 +48,8 @@ export function createApp() {
   const r = express.Router();
   const ok = (fn) => async (req, res) => res.json(await fn(req, res));
   const orgId = (req) => req.membership.org_id;
+  // Address used in activation links: BASE_URL if set, otherwise the address the request came in on.
+  const publicBase = (req) => process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
 
   // --- Public ------------------------------------------------------------------------
   r.get('/health', ok(() => ({ ok: true, time: iso(), quota_day_dubai: dubaiDay() })));
@@ -56,7 +60,7 @@ export function createApp() {
   r.get('/auth/config', (req, res) => {
     const nonce = randomToken(16);
     res.cookie('aih_nonce', nonce, { httpOnly: true, sameSite: 'lax', secure: config.secureCookies, maxAge: 10 * 60_000, path: '/' });
-    res.json({ google_client_id: config.googleClientId || null, nonce, demo_mode: config.demoMode, paypal_connected: paypalConfigured() });
+    res.json({ google_client_id: config.googleClientId || null, nonce, paypal_connected: paypalConfigured() });
   });
   r.post('/auth/google', ok(async (req, res) => {
     const ident = await verifyGoogleCredential(String(req.body.credential || ''), readCookie(req, 'aih_nonce'));
@@ -66,15 +70,16 @@ export function createApp() {
     audit({ actor: userId, action: 'LOGIN_GOOGLE' });
     return { ok: true };
   }));
-  r.post('/auth/demo', ok((req, res) => {
-    if (!config.demoMode) throw new HttpError(404, 'NOT_FOUND');
-    const u = getDb().prepare("SELECT * FROM platform_user WHERE google_sub = ? AND google_sub LIKE 'demo|%'").get(`demo|${req.body.persona}`);
-    if (!u) throw new HttpError(404, 'UNKNOWN_PERSONA');
-    crm.acceptInvitations(u);
-    createSession(res, u.id);
-    audit({ actor: u.id, action: 'LOGIN_DEMO' });
-    return { ok: true };
-  }));
+  if (options.testLogin) {
+    r.post('/test/login', ok((req, res) => {
+      const u = getDb().prepare('SELECT * FROM platform_user WHERE google_sub = ?').get(`fixture|${req.body.persona}`);
+      if (!u) throw new HttpError(404, 'UNKNOWN_PERSONA');
+      crm.acceptInvitations(u);
+      createSession(res, u.id);
+      return { ok: true };
+    }));
+    r.get('/test/totp', requireUser, ok((req) => ({ code: totp(req.user.mfa_secret) })));
+  }
   r.post('/auth/logout', ok((req, res) => { destroySession(req, res); return { ok: true }; }));
   r.post('/public/inquiry', ok((req) => hot.intakeInquiry({ siteKey: req.get('x-site-key') || req.body.site_key, body: req.body || {}, ip: req.ip, origin: req.get('origin') })));
   r.post('/public/search-event', ok((req) => hot.recordSearchEvent(req.body || {})));
@@ -93,7 +98,6 @@ export function createApp() {
       permissions: req.membership ? ROLE_PERMISSIONS[req.membership.role] : [],
       entitlements: req.membership ? entitlementSummary(req.membership.org_id) : null,
       unread_notifications: db.prepare('SELECT COUNT(*) AS n FROM notification WHERE user_id = ? AND read_at IS NULL').get(req.user.id).n,
-      demo_mode: config.demoMode,
     };
   }));
   r.post('/me/active-org', requireUser, ok((req) => {
@@ -217,14 +221,14 @@ export function createApp() {
   });
   r.post('/owner/cash/:id/verify', FINANCE, requireRecentMfa, ok((req) => billing.verifyCash({
     requestId: req.params.id, approver: req.user, amountCents: Math.round(Number(req.body.amount_usd) * 100), currency: req.body.currency || 'USD',
-    paidOn: req.body.paid_on, channel: req.body.channel, receiptNo: req.body.receipt_no,
+    paidOn: req.body.paid_on, channel: req.body.channel, receiptNo: req.body.receipt_no, baseUrl: publicBase(req),
   })));
   r.post('/owner/cash/:id/reject', FINANCE, ok((req) => {
     getDb().prepare("UPDATE cash_payment_request SET status = 'REJECTED' WHERE id = ? AND status = 'PENDING_PAYMENT'").run(Number(req.params.id));
     audit({ actor: req.user.id, action: 'CASH_REJECTED', target: `cash:${req.params.id}` });
     return { ok: true };
   }));
-  r.post('/owner/subscriptions/:id/reissue-link', FINANCE, requireRecentMfa, ok((req) => billing.reissueMagicLink({ subscriptionId: req.params.id, actor: req.user })));
+  r.post('/owner/subscriptions/:id/reissue-link', FINANCE, requireRecentMfa, ok((req) => billing.reissueMagicLink({ subscriptionId: req.params.id, actor: req.user, baseUrl: publicBase(req) })));
   r.post('/owner/subscriptions/:id/terminate', FINANCE, requireRecentMfa, ok((req) => { billing.terminateSubscription({ subscriptionId: req.params.id, actor: req.user, reason: req.body.reason }); return { ok: true }; }));
   r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources(), site_keys: hot.siteKeys() })));
   r.post('/owner/hot/site-keys', OWNER, ok((req) => hot.createSiteKey({ actor: req.user, orgId: req.body.org_id || null, label: req.body.label, allowedOrigin: req.body.allowed_origin })));
@@ -248,16 +252,6 @@ export function createApp() {
   r.get('/owner/flags', OWNER, ok(() => getDb().prepare('SELECT * FROM feature_flag').all()));
   r.post('/owner/flags', OWNER, requireRecentMfa, ok((req) => { owner.setFlag({ actor: req.user, key: req.body.key, enabled: req.body.enabled === true }); return { ok: true }; }));
   r.get('/owner/audit', OWNER, ok((req) => owner.auditLog(req.query)));
-
-  // --- DEMO helpers (refused unless DEMO_MODE) -----------------------------------------
-  r.get('/demo/outbox', requireUser, ok((req) => {
-    if (!config.demoMode) throw new HttpError(404, 'NOT_FOUND');
-    return getDb().prepare('SELECT id, to_email, subject, body, created_at FROM email_outbox WHERE to_user_id = ? ORDER BY id DESC').all(req.user.id);
-  }));
-  r.get('/demo/totp', requireUser, ok((req) => {
-    if (!config.demoMode || !req.user.mfa_secret) throw new HttpError(404, 'NOT_FOUND');
-    return { code: totp(req.user.mfa_secret), note: 'DEMO ONLY — in production this code comes from the owner’s authenticator app.' };
-  }));
 
   app.use('/api', r);
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'NOT_FOUND')));

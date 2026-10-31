@@ -127,14 +127,27 @@ export async function verifyGoogleCredential(credential, expectedNonce) {
   return { sub: payload.sub, email: payload.email, name: payload.name || payload.email };
 }
 
+// Placeholder Google subject of the owner row created from settings before first sign-in.
+export const PENDING_OWNER_SUB = 'owner-pending|';
+
 // Upsert by Google subject. Email/name may change; `sub` is the stable identity.
-// Platform roles are never assigned here.
+// Platform roles are never assigned here: the only owner is the one created from
+// settings (seed.ensureOwner), which is linked when that verified Google email signs in.
 export function upsertGoogleUser({ sub, email, name }) {
   const db = getDb();
   const existing = db.prepare('SELECT * FROM platform_user WHERE google_sub = ?').get(sub);
   if (existing) {
     db.prepare('UPDATE platform_user SET email = ?, name = ? WHERE id = ?').run(email, name, existing.id);
     return existing.id;
+  }
+  const ownerEmail = config.ownerEmail;
+  const pending = ownerEmail && String(email).toLowerCase() === ownerEmail
+    ? db.prepare('SELECT * FROM platform_user WHERE google_sub = ?').get(PENDING_OWNER_SUB + ownerEmail)
+    : null;
+  if (pending) {
+    db.prepare('UPDATE platform_user SET google_sub = ?, email = ?, name = ? WHERE id = ?').run(sub, email, name, pending.id);
+    audit({ actor: pending.id, action: 'OWNER_LINKED_TO_GOOGLE' });
+    return pending.id;
   }
   return Number(db.prepare('INSERT INTO platform_user (google_sub, email, name, created_at) VALUES (?,?,?,?)').run(sub, email, name, iso()).lastInsertRowid);
 }

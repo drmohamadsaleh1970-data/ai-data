@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const PORT = 3100;
 
-// E2E tests run against a local server seeded with fictional demo data. Never point
+// E2E tests run against a local server seeded with fictional test fixtures. Never point
 // them at production.
 export default defineConfig({
   testDir: './e2e',

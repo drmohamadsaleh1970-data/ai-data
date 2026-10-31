@@ -7,7 +7,7 @@ test('owner creates a website key; the drop-in form on another site delivers a H
   await page.goto('/#/owner/hot');
   await expect(page.getByRole('heading', { name: 'Website lead forms' })).toBeVisible();
   await page.getByLabel('Website name').fill(label);
-  await page.getByLabel('Leads go to').selectOption({ label: 'Marina Crest Realty (DEMO)' });
+  await page.getByLabel('Leads go to').selectOption({ label: 'Marina Crest Realty (TEST)' });
   await page.getByRole('button', { name: 'Create key' }).click();
   await expect(page.getByText(label, { exact: true })).toBeVisible();
   const key = (await (await page.request.get('/api/owner/hot')).json()).site_keys.find((k) => k.label === label).key;

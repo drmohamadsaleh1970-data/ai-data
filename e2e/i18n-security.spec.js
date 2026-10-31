@@ -16,7 +16,7 @@ test('Arabic switches the whole app to right-to-left', async ({ page }) => {
 });
 
 test('a subscriber session cannot reach raw-export or owner endpoints, even calling the API directly', async ({ request }) => {
-  const login = await request.post('/api/auth/demo', { data: { persona: 'agent2' }, headers: { 'x-aihome-csrf': '1' } });
+  const login = await request.post('/api/test/login', { data: { persona: 'agent2' }, headers: { 'x-aihome-csrf': '1' } });
   expect(login.ok()).toBeTruthy();
   for (const url of ['/api/investor-history/export?scope=ALL', '/api/cold/export/xlsx', '/api/crm/dump']) {
     expect((await request.get(url)).status(), url).toBe(403);

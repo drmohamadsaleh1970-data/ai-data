@@ -18,29 +18,27 @@ You need Node.js 22.5 or newer. There are no native builds and no external servi
 
 ```bash
 npm install                  # install
-npm run migrate              # create schema + reference data (plans, sources, flags)
-DEMO_MODE=true npm run seed  # FICTIONAL demo data + personas (never in production)
-DEMO_MODE=true npm run dev   # http://localhost:3000  (watch mode)
+npm run migrate              # create schema + reference data (plans, sources, flags) + owner
+npm run dev                  # http://localhost:3000  (watch mode)
 npm run build                # syntax-check all modules
-npm test                     # 30 acceptance/integration tests
-npm run test:e2e             # 8 Playwright browser tests (fresh fictional DB on port 3100)
-npm run bootstrap-owner -- --email owner@your-domain.com   # one-time owner bootstrap token
-docker compose up --build    # containerized demo
+npm test                     # 37 acceptance/integration tests (fictional fixtures in test/)
+npm run test:e2e             # 9 Playwright browser tests (fresh fictional DB on port 3100)
+npm run owner-mfa-secret -- owner@your-domain.com   # new OWNER_TOTP_SECRET + authenticator link
+docker compose up --build    # containerized portal
 ```
 
 To deploy, build the Dockerfile, set `NODE_ENV=production` and the variables in `.env.example`, and mount `/data`. Before real traffic, move to PostgreSQL (see `docs/ARCHITECTURE.md`).
 
-## Demo tour (DEMO_MODE)
+## First-time setup
 
-Open `/#/signin` and pick a persona.
+The portal has no demo mode and no sample data. It starts with plans, settings and lead sources only.
 
-| Persona | Try |
-|---|---|
-| Agency Director | Investor History → filter Dubai Marina buyers → select → **Transfer to My CRM** → open the lead |
-| Agent (Aisha/Leo) | Sees only their own assigned leads; logs calls and notes; stage changes |
-| Solo Agent | 99/day allowance; a large transfer asks before doing a partial transfer |
-| Pending cash customer | Billing shows a pending reference. Then, as Finance Admin, verify it (MFA: "DEMO: fill code"). Back as the customer, Billing → *Show my emails* → activation link. |
-| Platform Owner | *ai-home.world data import* (upload an export, preview mapping, import), business dashboard, unmasked master DB, XLSX export (MFA), Hot pricing and pool, rights review, opt-outs, audit log |
+1. **Google sign-in:** create an OAuth 2.0 *Web* client in Google Cloud Console. Add the portal's address (for example `https://ai-data-phi.vercel.app`) under *Authorized JavaScript origins*, and set `GOOGLE_CLIENT_ID`.
+2. **Platform owner:** set `OWNER_EMAIL` to your Google address and `OWNER_TOTP_SECRET` to a new secret (`npm run owner-mfa-secret -- you@gmail.com` prints one and an authenticator link). Add the secret to Google Authenticator or a similar app. The owner account is recreated from these settings on every start and linked to your Google account when you sign in.
+3. **Investor data:** sign in as owner → *ai-home.world data import* (see `DATA_SOURCE.md`), then approve rights under *Rights & governance*.
+4. **Customers:** agencies and agents sign in with Google, create their organization and pay. For cash payments, finance verifies the receipt (MFA) and gets a single-use activation link to send by WhatsApp or email.
+
+The token-based `npm run bootstrap-owner` remains available for servers with a console.
 
 ## What the tests prove (`npm test`)
 
@@ -84,13 +82,13 @@ Open `/#/signin` and pick a persona.
 
 ## Browser (E2E) tests (`npm run test:e2e`)
 
-These run in Chromium against a local server seeded with fictional data (`playwright.config.js` starts it on port 3100). Tested journeys:
+These run in Chromium against a local server seeded with fictional test fixtures and a test-only sign-in that the live portal does not have (`playwright.config.js` starts it on port 3100). Tested journeys:
 - **Landing and pricing:** both Cold plans; Hot Leads shown as priced separately.
-- **Demo sign-in:** lands on the overview with the shared quota.
+- **Sign-in:** only Google is offered; a signed-in director sees the shared quota.
 - **Investor History:**
   - Results are masked and there's no export button.
   - 3 selected records are transferred, quota +3, and they open in the CRM with the "historical" label.
-- **Cash payment:** pending → finance verifies (MFA) → magic link activates → the reused link is refused.
+- **Cash payment:** pending → finance verifies (MFA) and gets the activation link to send → the link activates → the reused link is refused.
 - **Owner:** unmasked data; XLSX export after MFA (watermark and manifest checked).
 - **ai-home.world import:** preview the column mapping, then import with MFA.
 - **Arabic:** the app switches to right-to-left.
@@ -136,9 +134,13 @@ The repository is ready to import into Vercel: `vercel.json` plus `api/index.js`
 1. In Vercel, go to **Add New → Project**, import the GitHub repo `ai-data`, and keep the project name **ai-data**. Framework preset: *Other*. Build and output settings come from `vercel.json`.
 2. Add environment variables (Project → Settings → Environment Variables) for the mode you want:
 
-| Mode | Variables | What you get |
-|---|---|---|
-| **Public demo** (fictional data) | `DEMO_MODE=true`, `ALLOW_PUBLIC_DEMO=true` | Persona sign-in and the full tour. Data lives in `/tmp`: it resets on cold starts and is not shared between instances. For showing the product only. |
-| **Real customers** | `GOOGLE_CLIENT_ID`, PayPal variables, `BASE_URL=https://<your-domain>` | Needs a **persistent database** first (see below). |
+| Variable | Needed for |
+|---|---|
+| `GOOGLE_CLIENT_ID` | Signing in (nobody can sign in without it) |
+| `OWNER_EMAIL`, `OWNER_TOTP_SECRET` | The platform owner account and its MFA |
+| `BASE_URL` (optional) | Address used in activation links; defaults to the address the request came in on |
+| PayPal variables (optional) | PayPal checkout; cash/bank payments work without them |
+
+Data currently lives in SQLite on `/tmp`: it resets on cold starts and is not shared between instances. Only the owner account (from settings) and reference data come back automatically.
 
 **Persistent database for production.** Vercel functions have no persistent disk, so real accounts, payments and CRM data must not live in SQLite on `/tmp`. Before taking real customers on Vercel, move the data layer to PostgreSQL (e.g. Neon from the Vercel Marketplace; `docs/ARCHITECTURE.md` describes the same tables and the locking query). The alternative is to run the Docker image on a host with a persistent volume.

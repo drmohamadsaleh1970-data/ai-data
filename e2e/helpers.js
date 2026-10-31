@@ -1,22 +1,24 @@
 import { expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 
-// Demo personas (DEMO_MODE only) sign in through the API; the browser context shares
-// the session cookie, so tests start signed in without clicking through the login page.
+// Fictional test personas sign in through the test-only route of the E2E server
+// (createApp({ testLogin: true })); the live portal has no such route. The browser
+// context shares the session cookie, so tests start signed in.
 export async function signIn(page, persona) {
-  const res = await page.request.post('/api/auth/demo', { data: { persona }, headers: { 'x-aihome-csrf': '1' } });
-  expect(res.ok(), `demo sign-in as ${persona}`).toBeTruthy();
+  const res = await page.request.post('/api/test/login', { data: { persona }, headers: { 'x-aihome-csrf': '1' } });
+  expect(res.ok(), `test sign-in as ${persona}`).toBeTruthy();
 }
 
-// Step-up MFA dialog. In DEMO mode the server exposes the current TOTP code to the
-// signed-in owner/finance persona through the "DEMO: fill code" button.
+// Step-up MFA dialog. The E2E server's test-only route returns the current authenticator
+// code of the signed-in owner/finance persona; the test types it like a person would.
 export async function passMfa(page) {
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('heading', { name: 'Verify it’s you' })).toBeVisible();
-  await dialog.getByRole('button', { name: 'DEMO: fill code' }).click();
-  await expect(dialog.getByPlaceholder('123456')).toHaveValue(/^\d{6}$/);
+  const { code } = await (await page.request.get('/api/test/totp')).json();
+  await dialog.getByPlaceholder('123456').fill(code);
   await dialog.getByRole('button', { name: 'Verify' }).click();
-  await expect(dialog).toBeHidden();
+  // The MFA window closes; the action it unlocked may open its own window right after.
+  await expect(page.locator('#mfa-form')).toBeHidden();
 }
 
 export async function coldUsedToday(page) {

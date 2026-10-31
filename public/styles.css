@@ -135,7 +135,6 @@ html[dir=rtl] .nav-link.active { box-shadow: inset -3px 0 0 var(--gold); }
   .page { padding: 16px; }
   .top { padding: 10px 16px; }
 }
-.demo-strip { background: repeating-linear-gradient(45deg, var(--warn-bg), var(--warn-bg) 12px, transparent 12px, transparent 24px), var(--warn-bg); color: var(--warn); font-weight: 700; font-size: 12px; text-align: center; padding: 5px 10px; }
 .quota-pill { display: flex; align-items: center; gap: 10px; white-space: nowrap; background: var(--cold-bg); color: var(--cold); padding: 6px 12px; border-radius: 999px; font-weight: 700; font-size: 12px; }
 .quota-pill .bar { width: 70px; height: 6px; border-radius: 6px; background: rgba(43,99,217,.18); overflow: hidden; }
 .quota-pill .bar i { display: block; height: 100%; background: var(--cold); }
@@ -212,7 +211,6 @@ html[dir=rtl] #toast { transform: translateX(50%); }
 .code { background: var(--muted-bg); border-radius: 10px; padding: 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 .persona { display: flex; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); cursor: pointer; text-align: start; width: 100%; }
 .persona:hover { border-color: var(--gold); }
-.avatar { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--gold-soft); color: var(--gold); flex: none; }
 .auth-wrap { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .auth-card { width: min(460px, 100%); display: grid; gap: 16px; }
 

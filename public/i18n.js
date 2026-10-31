@@ -163,7 +163,6 @@ const S = {
   verify: ['Verify', 'تحقق', 'Vérifier', 'Подтвердить', 'Doğrula'],
   export_xlsx: ['Export to Excel (XLSX)', 'تصدير إلى Excel', 'Exporter en Excel (XLSX)', 'Экспорт в Excel (XLSX)', 'Excel’e aktar (XLSX)'],
   agent_score: ['Agent score', 'تقييم الوكيل', 'Score agent', 'Оценка агента', 'Danışman puanı'],
-  demo_banner: ['DEMO MODE — all people and transactions shown are fictional.', 'وضع تجريبي — جميع الأشخاص والمعاملات وهمية.', 'MODE DÉMO — données fictives.', 'ДЕМО — все данные вымышлены.', 'DEMO — tüm veriler kurgusaldır.'],
   activate_title: ['Activate subscription', 'تفعيل الاشتراك', 'Activer l’abonnement', 'Активировать подписку', 'Aboneliği etkinleştir'],
   activate: ['Activate', 'تفعيل', 'Activer', 'Активировать', 'Etkinleştir'],
   export_disabled: ['Raw exports are not available on subscriber plans. Records move into your CRM only.', 'التصدير الخام غير متاح للمشتركين. تُنقل السجلات إلى نظامك فقط.', 'Pas d’export brut pour les abonnés : transfert CRM uniquement.', 'Выгрузка недоступна подписчикам: только перенос в CRM.', 'Abonelerde ham dışa aktarım yok; yalnızca CRM aktarımı.'],

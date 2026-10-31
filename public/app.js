@@ -76,10 +76,8 @@ async function withMfa(fn) {
     await new Promise((resolve, reject) => {
       openModal(`<h2>${t('verify_identity')}</h2><p class="muted">${t('mfa_prompt')}</p>
         <form id="mfa-form" class="grid"><input type="text" inputmode="numeric" maxlength="6" name="code" autocomplete="one-time-code" required placeholder="123456">
-        <div class="row"><button class="btn primary">${t('verify')}</button><button type="button" class="btn ghost" id="mfa-cancel">${t('cancel')}</button>
-        ${state.me.demo_mode ? '<button type="button" class="btn sm" id="mfa-demo">DEMO: fill code</button>' : ''}</div></form>`);
+        <div class="row"><button class="btn primary">${t('verify')}</button><button type="button" class="btn ghost" id="mfa-cancel">${t('cancel')}</button></div></form>`);
       document.getElementById('mfa-cancel').onclick = () => { closeModal(); reject(new Error('MFA cancelled')); };
-      document.getElementById('mfa-demo')?.addEventListener('click', async () => { document.querySelector('#mfa-form [name=code]').value = (await GET('/api/demo/totp')).code; });
       document.getElementById('mfa-form').onsubmit = async (ev) => {
         ev.preventDefault();
         try { await POST('/api/me/mfa/verify', { code: ev.target.code.value }); closeModal(); resolve(); } catch (err) { toast(errMsg(err), true); }
@@ -191,8 +189,7 @@ function shell(name, parts, content) {
     : '';
   const q = m.entitlements?.cold?.quota;
   const quota = q ? `<div class="quota-pill" title="${esc(t('resets_midnight'))}">❄ ${fmtNum(q.committed_used)} / ${fmtNum(q.plan_limit)}<span class="bar"><i style="width:${Math.min(100, (q.committed_used / q.plan_limit) * 100)}%"></i></span><span class="hide-sm">${fmtNum(q.remaining)} ${t('remaining')}</span></div>` : '';
-  return `${m.demo_mode ? `<div class="demo-strip">${t('demo_banner')}</div>` : ''}
-  <div class="shell">
+  return `<div class="shell">
     <aside class="side">${logo(true)}${nav}
       <div class="spacer"></div>
       <div class="small" style="padding:10px;color:#8193a8">${esc(m.user.name)}<br>${esc(m.user.email)}${m.user.platform_role ? `<br><span class="badge gold" style="margin-top:6px">${esc(human(m.user.platform_role))}</span>` : ''}${org ? `<br><span class="badge" style="margin-top:6px">${esc(human(org.role))}</span>` : ''}</div>
@@ -221,8 +218,7 @@ async function viewLanding() {
       <div><span class="price">${fmtUSD(p.price_usd_cents)}</span> <span class="muted">${t('per_month')}</span></div>
       <ul><li><b>${fmtNum(p.cold_daily_limit)}</b>&nbsp;${t('cold_per_day')}</li><li>${t('unlimited_members')}</li><li>${t('shared_quota')}</li><li>${t('full_crm')}</li><li>${t('crm_only')}</li><li class="no">${t('hot_not_included')}</li></ul>
       <a class="btn ${p.code === 'AGENCY_MONTHLY' ? 'gold' : 'primary'} block" href="#/signin">${t('continue_google')}</a></div>`;
-  return `${state.cfg.demo_mode ? `<div class="demo-strip">${t('demo_banner')}</div>` : ''}
-  <nav class="pub-nav">${logo()}<div class="spacer"></div><a href="#pricing" class="hide-sm" style="text-decoration:none;font-weight:600">${t('pricing')}</a>${langSel}<a class="btn primary" href="#/signin">${t('sign_in')}</a></nav>
+  return `<nav class="pub-nav">${logo()}<div class="spacer"></div><a href="#pricing" class="hide-sm" style="text-decoration:none;font-weight:600">${t('pricing')}</a>${langSel}<a class="btn primary" href="#/signin">${t('sign_in')}</a></nav>
   <section class="hero">
     <div><div class="kicker">${t('hero_kicker')}</div><h1>${t('hero_title')}</h1><p>${t('hero_sub')}</p>
       <div class="row" style="margin-top:24px"><a class="btn gold" href="#/signin">${t('get_started')}</a><a class="btn" href="#pricing">${t('pricing')}</a></div></div>
@@ -256,12 +252,6 @@ async function viewLanding() {
 
 async function viewSignIn() {
   const c = state.cfg;
-  const personas = [
-    ['owner', 'Platform Owner', 'Owner console, unmasked data, XLSX export'], ['finance', 'Finance Admin', 'Verify cash, magic links'],
-    ['director', 'Agency Director', 'Agency $999 · 999/day shared'], ['leader', 'Team Leader', 'Agency team oversight'],
-    ['agent1', 'Agent (Aisha)', 'Agency agent'], ['agent2', 'Agent (Leo)', 'Agency agent'], ['solo', 'Solo Agent', 'Agent $99 · 99/day'],
-    ['pending', 'Pending cash customer', 'Awaiting offline payment'], ['newuser', 'New visitor', 'Onboarding from scratch'],
-  ];
   const pendingActivation = safeGet('aih_pending_activation');
   return `<div class="auth-wrap"><div class="auth-card">
     <div style="text-align:center">${logo()}</div>
@@ -271,8 +261,6 @@ async function viewSignIn() {
       ${c.google_client_id ? '<div id="gsi-btn" style="min-height:44px"></div>' : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`}
       <p class="small muted">We only use your Google identity (name, email, account ID). We never request access to your inbox.</p>
     </div>
-    ${c.demo_mode ? `<div class="card grid"><div class="row"><h3 style="margin:0">DEMO personas</h3><span class="badge warn">Fictional</span></div>
-      ${personas.map(([k, n, d]) => `<button class="persona" data-act="demo-login" data-persona="${k}"><span class="avatar">${n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>` : ''}
     <a href="#/" class="small muted" style="text-align:center">← AI-DATA</a>
   </div></div>`;
 }
@@ -659,9 +647,9 @@ async function viewBilling(_p, query) {
         <button class="btn gold" data-act="pay-cash" data-plan="${p.code}">${t('pay_cash')}</button></div></div>`).join('') : `<div class="card muted">Only the account owner or director can change the subscription.</div>`}</div>
   </div>
   ${b.cash_requests.length ? `<div class="card" style="margin-top:16px"><h3>Offline payment requests</h3><div class="table-wrap"><table><thead><tr><th>Reference</th><th>${t('plan')}</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>${t('date')}</th></tr></thead><tbody>${b.cash_requests.map((c) => `<tr><td class="mono"><b>${esc(c.reference)}</b></td><td>${esc(human(c.plan_code))}</td><td class="num">${fmtUSD(c.amount_cents)}</td><td><span class="badge ${c.status === 'VERIFIED' ? 'ok' : c.status === 'REJECTED' ? 'bad' : 'warn'}">${esc(human(c.status))}</span></td><td>${fmtDT(c.created_at)}</td></tr>`).join('')}</tbody></table></div>
-    <p class="small muted">Pay at the AI-DATA office or by bank transfer quoting the reference. Access is activated only after finance verifies receipt; you'll then get a single-use activation link at your Google email.</p></div>` : ''}
+    <p class="small muted">Pay at the AI-DATA office or by bank transfer quoting the reference. Access is activated only after finance verifies receipt; AI-DATA finance then sends you a single-use activation link by WhatsApp or email.</p></div>` : ''}
   <div class="card" style="margin-top:16px"><h3>${t('payments')}</h3><div class="table-wrap"><table><thead><tr><th>${t('date')}</th><th>Method</th><th>Product</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>Receipt</th></tr></thead><tbody>${b.payments.map((p) => `<tr><td>${fmtDate(p.paid_at)}</td><td>${esc(human(p.provider))}</td><td>${esc(human(p.kind))}</td><td class="num">${fmtUSD(p.amount_cents)}</td><td><span class="badge ${p.status === 'COMPLETED' ? 'ok' : 'bad'}">${esc(human(p.status))}</span></td><td class="mono">${esc(p.receipt_no || '—')}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">—</td></tr>'}</tbody></table></div></div>
-  ${state.me.demo_mode ? `<div class="card" style="margin-top:16px"><h3>DEMO: email outbox</h3><p class="small muted">In production these go to your Google email. Shown here only in DEMO mode.</p><div id="outbox"><button class="btn sm" data-act="outbox">Show my emails</button></div></div>` : ''}`;
+`;
 }
 
 async function viewIntegrations() {
@@ -720,8 +708,20 @@ async function ownerFinance() {
       ${c.customer_note ? `<div class="small muted">“${esc(c.customer_note)}”</div>` : ''}
       <div class="grid g4" style="gap:8px"><label class="field">Amount received (USD)<input type="number" name="amount_usd" step="0.01" min="0" required></label><label class="field">Paid on<input type="date" name="paid_on" required></label>
         <label class="field">Channel<select name="channel"><option value="CASH_OFFICE">Cash at office</option><option value="BANK_TRANSFER">Bank transfer</option><option value="CHEQUE">Cheque</option></select></label><label class="field">Receipt no.<input type="text" name="receipt_no" required maxlength="60"></label></div>
-      <div class="row"><button class="btn gold">Verify receipt & send activation link</button><button type="button" class="btn ghost" data-act="reject-cash" data-id="${c.id}">Reject</button></div></form>`).join('') || '<div class="empty">No pending offline payments.</div>'}</div>
+      <div class="row"><button class="btn gold">Verify receipt & create activation link</button><button type="button" class="btn ghost" data-act="reject-cash" data-id="${c.id}">Reject</button></div></form>`).join('') || '<div class="empty">No pending offline payments.</div>'}</div>
   <div class="card" style="margin-top:16px"><h3>Awaiting activation</h3>${d.awaiting_activation.map((s) => `<div class="row" style="border-top:1px solid var(--line);padding:8px 0"><span>${esc(s.org_name)} · ${esc(human(s.plan_code))} · ${fmtDT(s.created_at)}</span><div class="spacer"></div><button class="btn sm" data-act="reissue" data-id="${s.id}">Reissue link</button></div>`).join('') || '<div class="muted">—</div>'}</div>`;
+}
+
+// No email service yet: finance sends the single-use link by WhatsApp or email.
+function showActivationLink(r, reissued = false) {
+  const text = `Your AI-DATA payment is verified. Sign in with Google as ${r.delivered_to} and open this single-use link to activate your subscription: ${r.activation_link}`;
+  openModal(`<h2>${reissued ? 'New activation link' : 'Payment verified ✓'}</h2>
+    <p class="small muted">Send this single-use link to <b>${esc(r.delivered_to)}</b>. It only works for that Google account${reissued ? '; the previous link no longer works' : ''}.</p>
+    <div class="code" id="act-link">${esc(r.activation_link)}</div>
+    <div class="row"><button class="btn primary" data-act="copy-link" data-text="${esc(r.activation_link)}">Copy link</button>
+      <a class="btn" target="_blank" rel="noopener noreferrer" href="https://wa.me/?text=${encodeURIComponent(text)}">Send by WhatsApp</a>
+      <a class="btn" href="mailto:${esc(r.delivered_to)}?subject=${encodeURIComponent('Activate your AI-DATA subscription')}&body=${encodeURIComponent(text)}">Send by email</a>
+      <button class="btn ghost" data-act="close-refresh">${t('close')}</button></div>`);
 }
 
 async function ownerData() {
@@ -823,7 +823,6 @@ const actions = {
   'close-nav': (el) => { closeModal(); go(el.getAttribute('href')); },
   'close-refresh': () => { closeModal(); render(); },
   logout: async () => { await POST('/api/auth/logout'); state.cfg = null; state.ih = { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null }; go('#/'); },
-  'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
   notifs: async () => {
     const ex = document.getElementById('notif-dd');
     if (ex) return ex.remove();
@@ -854,10 +853,12 @@ const actions = {
     const note = prompt('Optional note for AI-DATA finance (e.g. where/when you will pay):') ?? '';
     try { const r = await POST('/api/billing/cash', { plan: el.dataset.plan, note }); toast(`Payment reference ${r.reference} — pending verification`); render(); } catch (e) { toast(errMsg(e), true); }
   },
-  outbox: async () => { const m = await GET('/api/demo/outbox'); document.getElementById('outbox').innerHTML = m.map((x) => `<div class="code" style="margin-bottom:8px"><b>${esc(x.subject)}</b>\n${esc(x.body).replace(/(#\/activate\/[\w-]+)/, '<a href="$1">$1</a>')}</div>`).join('') || '<span class="muted">—</span>'; },
   'site-key-revoke': async (el) => { if (confirm('Revoke this key? Forms using it will stop sending leads.')) { await POST(`/api/owner/hot/site-keys/${encodeURIComponent(el.dataset.key)}/revoke`); render(); } },
   'reject-cash': async (el) => { if (confirm('Reject this payment request?')) { await POST(`/api/owner/cash/${el.dataset.id}/reject`); render(); } },
-  reissue: async (el) => { try { await withMfa(() => POST(`/api/owner/subscriptions/${el.dataset.id}/reissue-link`)); toast('New link sent; previous link revoked'); } catch (e) { toast(errMsg(e), true); } },
+  reissue: async (el) => { try { showActivationLink(await withMfa(() => POST(`/api/owner/subscriptions/${el.dataset.id}/reissue-link`)), true); } catch (e) { toast(errMsg(e), true); } },
+  'copy-link': async (el) => {
+    try { await navigator.clipboard.writeText(el.dataset.text); toast('Link copied ✓'); } catch { window.getSelection().selectAllChildren(document.getElementById('act-link')); toast('Press Ctrl+C to copy'); }
+  },
   'owner-more': async () => { const o = state.owner; const r = await POST('/api/owner/cold/search', { filter: o.filter, cursor: o.cursor, limit: 50 }); o.results.push(...r.results); o.cursor = r.next_cursor; render(); },
   'owner-export': async () => {
     const form = document.querySelector('[data-form=owner-search]');
@@ -926,7 +927,7 @@ const forms = {
   invite: async (f) => { await POST('/api/org/invitations', { email: f.email.value, role: f.role.value }); toast('Invitation recorded ✓'); render(); },
   'verify-cash': async (f) => {
     const r = await withMfa(() => POST(`/api/owner/cash/${f.dataset.id}/verify`, { amount_usd: Number(f.amount_usd.value), paid_on: f.paid_on.value, channel: f.channel.value, receipt_no: f.receipt_no.value }));
-    toast(`Verified. Activation link sent to ${r.delivered_to}`); render();
+    showActivationLink(r);
   },
   'hot-pricing': async (f) => { await withMfa(() => POST('/api/owner/hot/pricing', { model: f.model.value, price_usd: Number(f.price_usd.value), exclusive: f.exclusive.checked })); toast('Pricing saved'); render(); },
   'hot-grant': async (f) => { await withMfa(() => POST('/api/owner/hot/entitlements', { org_id: Number(f.org_id.value), credits: Number(f.credits.value) })); toast('Credits granted'); render(); },

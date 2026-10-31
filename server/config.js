@@ -4,8 +4,6 @@ export const config = {
   port: Number(env.PORT || 3000),
   baseUrl: env.BASE_URL || `http://localhost:${env.PORT || 3000}`,
   production: env.NODE_ENV === 'production',
-  // DEMO mode exposes persona sign-in and the email outbox for local evaluation.
-  demoMode: env.DEMO_MODE === 'true',
   secureCookies: env.NODE_ENV === 'production',
   googleClientId: env.GOOGLE_CLIENT_ID || '',
   paypal: {
@@ -19,6 +17,10 @@ export const config = {
   // secure default: block new paid transfers as soon as entitlement is invalid.
   graceDays: Number(env.BILLING_GRACE_DAYS || 0),
   magicLinkTtlHours: Number(env.MAGIC_LINK_TTL_HOURS || 48),
+  // The platform owner is defined by settings, so the account exists after every restart
+  // and is linked to the owner's Google account on first sign-in (see seed.ensureOwner).
+  get ownerEmail() { return (env.OWNER_EMAIL || '').trim().toLowerCase(); },
+  get ownerTotpSecret() { return (env.OWNER_TOTP_SECRET || '').replace(/\s+/g, '').toUpperCase(); },
   // ai-home.world is the investor-data source only. Read lazily so tests and ops can
   // change it without a restart of the config module.
   aihomeSource: {
@@ -29,9 +31,3 @@ export const config = {
 };
 
 export const paypalConfigured = () => !!(config.paypal.clientId && config.paypal.clientSecret && config.paypal.webhookId);
-
-// A public demo on a production host (e.g. a Vercel preview with fictional data) needs a
-// second, explicit key so DEMO_MODE can never be switched on in production by accident.
-if (config.production && config.demoMode && env.ALLOW_PUBLIC_DEMO !== 'true') {
-  throw new Error('DEMO_MODE must not be enabled in production (set ALLOW_PUBLIC_DEMO=true only for a public fictional-data demo).');
-}

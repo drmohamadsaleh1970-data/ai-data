@@ -12,13 +12,14 @@ test('concurrent transfers never exceed the shared daily allowance', async () =>
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aihome-conc-'));
   process.env.DB_FILE = path.join(dir, 'c.db');
   const { getDb } = await import('../server/db.js');
-  const { seedBase, seedDemo } = await import('../server/seed.js');
+  const { seedBase } = await import('../server/seed.js');
+  const { seedFixtures } = await import('./fixtures.js');
   const db = getDb();
   seedBase();
-  const { soloOrg } = seedDemo({ investors: 400 });
+  const { soloOrg } = seedFixtures({ investors: 400 });
   const soloOwner = db.prepare('SELECT owner_user_id FROM organization WHERE id = ?').get(soloOrg).owner_user_id;
   // Second member of the same paying account.
-  const second = db.prepare("SELECT id FROM platform_user WHERE google_sub = 'demo|newuser'").get().id;
+  const second = db.prepare("SELECT id FROM platform_user WHERE google_sub = 'fixture|newuser'").get().id;
   db.prepare("INSERT INTO membership (org_id, user_id, role, created_at) VALUES (?,?,'AGENT',?)").run(soloOrg, second, new Date().toISOString());
   const ids = db.prepare("SELECT id FROM investor_contact WHERE rights_status='APPROVED' AND suppressed=0 ORDER BY id LIMIT 140").all().map((r) => r.id);
   db.close();

@@ -64,7 +64,7 @@ The unique keys `record_acquisition_grant(org_id, investor_id)` and `cold_transf
 
 | Method & path | Who | Notes |
 |---|---|---|
-| GET `/api/auth/config` | public | Google client ID, nonce cookie, demo flag |
+| GET `/api/auth/config` | public | Google client ID, nonce cookie, PayPal status |
 | POST `/api/auth/google` `{credential}` | public | Verifies the Google ID token. Identity = `sub`. Accepts pending invitations. |
 | GET `/api/me` | session | User, memberships, active org, permissions, entitlements |
 | POST `/api/organizations` `{name, kind, terms:true,…}` | session | Creator becomes ORG_OWNER. No data access until paid. |

@@ -2,19 +2,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Each test file gets its own fresh SQLite file with base + FICTIONAL demo data.
-export async function startTestServer() {
+// Each test file gets its own fresh SQLite file with reference data and, unless turned
+// off, FICTIONAL fixtures (test/fixtures.js). By default the app is built with the
+// test-only sign-in (createApp({ testLogin: true })), which production never enables.
+export async function startTestServer({ fixtures = true, testLogin = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aihome-test-'));
   process.env.DB_FILE = path.join(dir, 'test.db');
   process.env.EXPORT_DIR = path.join(dir, 'exports');
-  process.env.DEMO_MODE = 'true';
   const { getDb } = await import('../server/db.js');
-  const { seedBase, seedDemo } = await import('../server/seed.js');
+  const { seedBase, ensureOwner } = await import('../server/seed.js');
+  const { seedFixtures } = await import('./fixtures.js');
   const { createApp } = await import('../server/app.js');
   getDb();
   seedBase();
-  const ids = seedDemo({ investors: 400 });
-  const server = createApp().listen(0);
+  ensureOwner();
+  const ids = fixtures ? seedFixtures({ investors: 400 }) : null;
+  const server = createApp({ testLogin }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   return { base, server, ids, dbFile: process.env.DB_FILE, close: () => new Promise((r) => server.close(r)) };
@@ -44,8 +47,8 @@ export function client(base) {
     post: (u, b = {}, h) => call('POST', u, b, h),
     patch: (u, b = {}, h) => call('PATCH', u, b, h),
     del: (u, h) => call('DELETE', u, undefined, h),
-    login: async (persona) => { const r = await call('POST', '/api/auth/demo', { persona }); if (r.status !== 200) throw new Error('login failed ' + persona); return r; },
-    mfa: async () => { const { data } = await call('GET', '/api/demo/totp'); return call('POST', '/api/me/mfa/verify', { code: data.code }); },
+    login: async (persona) => { const r = await call('POST', '/api/test/login', { persona }); if (r.status !== 200) throw new Error('login failed ' + persona); return r; },
+    mfa: async () => { const { data } = await call('GET', '/api/test/totp'); return call('POST', '/api/me/mfa/verify', { code: data.code }); },
   };
 }
 

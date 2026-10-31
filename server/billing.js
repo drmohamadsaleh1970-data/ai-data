@@ -190,7 +190,7 @@ export function requestCash({ orgId, planCode, user, note }) {
   return getDb().prepare('SELECT * FROM cash_payment_request WHERE id = ?').get(id);
 }
 
-export function verifyCash({ requestId, approver, amountCents, currency = 'USD', paidOn, channel, receiptNo }) {
+export function verifyCash({ requestId, approver, amountCents, currency = 'USD', paidOn, channel, receiptNo, baseUrl = config.baseUrl }) {
   if (!Number.isInteger(amountCents) || amountCents <= 0) throw new HttpError(400, 'AMOUNT_REQUIRED');
   if (!paidOn || !channel || !receiptNo) throw new HttpError(400, 'RECEIPT_DETAILS_REQUIRED', 'Amount, paid date, channel and receipt number are required.');
   if (currency !== 'USD') throw new HttpError(400, 'CURRENCY_NOT_CONFIGURED', 'Only USD settlement is configured. Add a verified FX policy before accepting other currencies.');
@@ -210,14 +210,16 @@ export function verifyCash({ requestId, approver, amountCents, currency = 'USD',
       VALUES (?,?,'AWAITING_ACTIVATION','CASH',?,?,?,?,?)`).run(req.org_id, req.plan_code, `cash-${req.reference}`, req.amount_cents, effective, ts, ts).lastInsertRowid);
     conn.prepare(`INSERT INTO payment (org_id, subscription_id, provider, amount_cents, currency, status, external_id, receipt_no, paid_at, created_at)
       VALUES (?,?,'CASH',?,?,'COMPLETED',?,?,?,?)`).run(req.org_id, subId, amountCents, currency, req.reference, receiptNo, paidOn, ts);
-    const link = issueMagicLink(conn, { orgId: req.org_id, userId: req.requested_by, subscriptionId: subId });
+    const link = issueMagicLink(conn, { orgId: req.org_id, userId: req.requested_by, subscriptionId: subId, baseUrl });
     conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target, meta_json) VALUES (?,?,?,?,?,?)')
       .run(ts, approver.id, req.org_id, 'CASH_VERIFIED', `cash:${req.id}`, JSON.stringify({ amountCents, channel, receiptNo, subscriptionId: subId }));
-    return { subscription_id: subId, magic_link_id: link.id, delivered_to: link.email };
+    return { subscription_id: subId, magic_link_id: link.id, delivered_to: link.email, activation_link: link.url };
   });
 }
 
-function issueMagicLink(conn, { orgId, userId, subscriptionId }) {
+// No email service is connected yet, so the link goes back to the finance user (MFA
+// verified) to send by WhatsApp or email. Only its hash is stored.
+function issueMagicLink(conn, { orgId, userId, subscriptionId, baseUrl }) {
   const token = randomToken(32);
   const ts = iso();
   const expires = new Date(now().getTime() + config.magicLinkTtlHours * 3_600_000).toISOString();
@@ -225,22 +227,19 @@ function issueMagicLink(conn, { orgId, userId, subscriptionId }) {
   const id = Number(conn.prepare('INSERT INTO activation_magic_link (token_hash, org_id, user_id, subscription_id, expires_at, created_at) VALUES (?,?,?,?,?,?)')
     .run(sha256(token), orgId, userId, subscriptionId, expires, ts).lastInsertRowid);
   const user = conn.prepare('SELECT email FROM platform_user WHERE id = ?').get(userId);
-  // Token travels in the URL fragment, which browsers never send to servers or in Referer.
-  conn.prepare('INSERT INTO email_outbox (to_user_id, to_email, subject, body, created_at) VALUES (?,?,?,?,?)').run(userId, user.email,
-    'Activate your AI-DATA subscription',
-    `Your offline payment has been verified. Sign in with this Google account and open:\n${config.baseUrl}/#/activate/${token}\nThis single-use link expires ${expires}.`, ts);
   conn.prepare('INSERT INTO audit_log (at, org_id, action, target) VALUES (?,?,?,?)').run(ts, orgId, 'MAGIC_LINK_ISSUED', `link:${id}`);
-  return { id, email: user.email, token };
+  // Token travels in the URL fragment, which browsers never send to servers or in Referer.
+  return { id, email: user.email, expires_at: expires, url: `${baseUrl}/#/activate/${token}` };
 }
 
-export function reissueMagicLink({ subscriptionId, actor }) {
+export function reissueMagicLink({ subscriptionId, actor, baseUrl = config.baseUrl }) {
   return tx((conn) => {
     const sub = conn.prepare("SELECT * FROM subscription WHERE id = ? AND status = 'AWAITING_ACTIVATION'").get(Number(subscriptionId));
     if (!sub) throw new HttpError(404, 'NOT_AWAITING_ACTIVATION');
     const prev = conn.prepare('SELECT user_id FROM activation_magic_link WHERE subscription_id = ? ORDER BY id DESC LIMIT 1').get(sub.id);
-    const link = issueMagicLink(conn, { orgId: sub.org_id, userId: prev.user_id, subscriptionId: sub.id });
+    const link = issueMagicLink(conn, { orgId: sub.org_id, userId: prev.user_id, subscriptionId: sub.id, baseUrl });
     conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target) VALUES (?,?,?,?,?)').run(iso(), actor.id, sub.org_id, 'MAGIC_LINK_REISSUED', `link:${link.id}`);
-    return { magic_link_id: link.id };
+    return { magic_link_id: link.id, delivered_to: link.email, activation_link: link.url };
   });
 }
 

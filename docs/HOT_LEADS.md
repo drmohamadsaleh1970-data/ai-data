@@ -92,8 +92,8 @@ Portal leads belong to the agency whose listing produced them. They must stay in
 
 ## Before taking real leads
 - [ ] **Vercel Authentication off** for production (Project → Settings → Deployment Protection), or use a custom domain. Otherwise visitors' browsers get a Vercel login page instead of the form.
-- [ ] **Permanent database.** The current Vercel demo loses data whenever the server restarts (see `README.md` → *Deploying to Vercel*).
+- [ ] **Permanent database.** The current Vercel site loses data whenever the server restarts (see `README.md` → *Deploying to Vercel*).
 - [ ] A **privacy notice** page on every site that uses the form, linked with `data-privacy-url`.
-- [ ] A **new key** with an allowed address for each real website. The demo key `aihome-public` exists only in demo data.
+- [ ] A **key** with an allowed address for each real website (Owner console → Hot pricing & pool → Website lead forms).
 - [ ] Hot **pricing** configured, if you sell pool leads.
 - [ ] Send one test lead and check that it arrives.

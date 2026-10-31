@@ -30,13 +30,15 @@ test('cash payment stays pending until finance verifies receipt; magic link acti
   assert.equal(missing.data.error, 'RECEIPT_DETAILS_REQUIRED');
   const ok = await f.post(`/api/owner/cash/${reqId}/verify`, { amount_usd: 999, paid_on: '2026-10-30', channel: 'CASH_OFFICE', receipt_no: 'R-1001' });
   assert.equal(ok.status, 200);
+  // No email service yet: finance gets the single-use link to send by WhatsApp or email.
+  assert.equal(ok.data.delivered_to, 'pending@palmgate.example');
+  assert.ok(ok.data.activation_link.startsWith(`${srv.base}/#/activate/`), ok.data.activation_link);
   assert.equal((await f.post(`/api/owner/cash/${reqId}/verify`, { amount_usd: 999, paid_on: '2026-10-30', channel: 'CASH_OFFICE', receipt_no: 'R-1001' })).data.error, 'ALREADY_PROCESSED');
 
   // Verified but not yet activated → still no entitlement.
   ent = (await p.get('/api/me/entitlements')).data;
   assert.equal(ent.cold.active, false);
-  const mail = (await p.get('/api/demo/outbox')).data[0];
-  const token = mail.body.match(/#\/activate\/([\w-]+)/)[1];
+  const token = ok.data.activation_link.match(/#\/activate\/([\w-]+)/)[1];
   assert.ok(!JSON.stringify(dash.data).includes(token), 'token never exposed in dashboards');
 
   const intruder = client(srv.base);
@@ -57,12 +59,28 @@ test('magic links expire', async () => {
   const f = client(srv.base);
   await f.login('finance');
   await f.mfa();
-  await f.post(`/api/owner/cash/${req.data.id}/verify`, { amount_usd: 99, paid_on: '2026-10-30', channel: 'BANK', receipt_no: 'R-2' });
-  const token = (await s.get('/api/demo/outbox')).data[0].body.match(/#\/activate\/([\w-]+)/)[1];
+  const verified = await f.post(`/api/owner/cash/${req.data.id}/verify`, { amount_usd: 99, paid_on: '2026-10-30', channel: 'BANK', receipt_no: 'R-2' });
+  const token = verified.data.activation_link.match(/#\/activate\/([\w-]+)/)[1];
   util.setClockOffset(49 * 3_600_000);
   await s.login('solo'); // the 12h session also expired; sign in again
   assert.equal((await s.post('/api/billing/activate', { token })).data.error, 'LINK_EXPIRED');
   util.setClockOffset(0);
+});
+
+test('reissuing an activation link returns a fresh link and revokes the old one', async () => {
+  const s = client(srv.base);
+  await s.login('solo');
+  const req = await s.post('/api/billing/cash', { plan: 'AGENT_MONTHLY' });
+  const f = client(srv.base);
+  await f.login('finance');
+  await f.mfa();
+  const first = await f.post(`/api/owner/cash/${req.data.id}/verify`, { amount_usd: 99, paid_on: '2026-10-30', channel: 'BANK', receipt_no: 'R-3' });
+  const again = await f.post(`/api/owner/subscriptions/${first.data.subscription_id}/reissue-link`);
+  assert.equal(again.data.delivered_to, 'solo@example.com');
+  assert.notEqual(again.data.activation_link, first.data.activation_link);
+  const token = (r) => r.data.activation_link.match(/#\/activate\/([\w-]+)/)[1];
+  assert.equal((await s.post('/api/billing/activate', { token: token(first) })).data.error, 'LINK_REVOKED');
+  assert.equal((await s.post('/api/billing/activate', { token: token(again) })).status, 200);
 });
 
 function paypalSub(orgId, plan = 'AGENCY_MONTHLY') {

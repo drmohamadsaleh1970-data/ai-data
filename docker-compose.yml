@@ -1,14 +1,13 @@
-# Local evaluation with fictional DEMO data. For production, drop DEMO_MODE, set
-# NODE_ENV=production, provide real credentials via an env file / secret store.
+# Runs the portal with its data in a Docker volume. Put GOOGLE_CLIENT_ID, OWNER_EMAIL and
+# OWNER_TOTP_SECRET in .env; for production set NODE_ENV=production and use a secret store.
 services:
   portal:
     build: .
     ports: ["3000:3000"]
     environment:
       NODE_ENV: development
-      DEMO_MODE: "true"
     env_file: [{ path: .env, required: false }]
     volumes: [portal-data:/data]
-    command: ["sh", "-c", "node --no-warnings scripts/seed.js && node --no-warnings server/index.js"]
+    command: ["sh", "-c", "node --no-warnings scripts/migrate.js && node --no-warnings server/index.js"]
 volumes:
   portal-data:

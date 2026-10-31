@@ -11,7 +11,7 @@ before(async () => {
 });
 after(async () => { util.setClockOffset(0); await srv.close(); });
 
-const inquiry = (body, siteKey = 'marinacrest-demo-site') =>
+const inquiry = (body, siteKey = 'marinacrest-test-site') =>
   fetch(srv.base + '/api/public/inquiry', { method: 'POST', headers: { 'content-type': 'application/json', 'x-site-key': siteKey }, body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, data: await r.json() }));
 
 test('real web-form inquiry becomes a HOT lead with consent evidence, assigned and notified; no Cold quota used', async () => {
@@ -58,7 +58,7 @@ test('anonymous search is analytics only — never an identified lead', async ()
 });
 
 test('Hot monetization is gated until the owner configures pricing; allocation bills a separate ledger once', async () => {
-  const pool = await inquiry({ full_name: 'Pool Person (TEST)', email: 'pool@example.invalid', consent_contact: true, client_event_id: 'p1' }, 'aihome-public');
+  const pool = await inquiry({ full_name: 'Pool Person (TEST)', email: 'pool@example.invalid', consent_contact: true, client_event_id: 'p1' }, 'pool-test-site');
   assert.equal(pool.data.destination, 'AIHOME_HOT_POOL');
   const o = client(srv.base);
   await o.login('owner');
@@ -87,7 +87,7 @@ test('missed first-contact SLA notifies agent, then escalates to team leader/man
   const lead = db.prepare('SELECT * FROM crm_lead WHERE id = ?').get(r.data.lead_id);
   assert.equal(lead.escalation_level, 1);
   runSlaSweep();
-  const leader = db.prepare("SELECT id FROM platform_user WHERE google_sub='demo|leader'").get().id;
+  const leader = db.prepare("SELECT id FROM platform_user WHERE google_sub='fixture|leader'").get().id;
   assert.ok(db.prepare("SELECT COUNT(*) AS n FROM notification WHERE user_id = ? AND type='SLA_ESCALATION'").get(leader).n >= 1);
   util.setClockOffset(0);
 });

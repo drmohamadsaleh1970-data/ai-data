@@ -24,23 +24,26 @@ test('offline payment stays pending until finance verifies it; the magic link ac
   await request.getByLabel('Amount received (USD)').fill('999');
   await request.getByLabel('Paid on').fill('2026-10-30');
   await request.getByLabel('Receipt no.').fill(`E2E-${ref}`);
-  await request.getByRole('button', { name: 'Verify receipt & send activation link' }).click();
+  await request.getByRole('button', { name: 'Verify receipt & create activation link' }).click();
   await passMfa(finance);
-  await expect(finance.getByText('Verified. Activation link sent to pending@palmgate.example')).toBeVisible();
+  // No email service yet: finance gets the single-use link to send by WhatsApp or email.
+  const dialog = finance.getByRole('dialog');
+  await expect(dialog.getByRole('heading', { name: 'Payment verified ✓' })).toBeVisible();
+  await expect(dialog).toContainText('pending@palmgate.example');
+  await expect(dialog.getByRole('link', { name: 'Send by WhatsApp' })).toHaveAttribute('href', /^https:\/\/wa\.me\/\?text=/);
+  const href = (await dialog.locator('#act-link').textContent()).replace(/^https?:\/\/[^/]+/, '');
+  expect(href).toMatch(/^\/#\/activate\/[\w-]+$/);
 
   await customer.reload();
   await expect(requestRow).toContainText('Verified');
-  await customer.getByRole('button', { name: 'Show my emails' }).click();
-  const link = customer.getByRole('link', { name: /#\/activate\// }).first();
-  const href = await link.getAttribute('href');
-  await link.click();
+  await customer.goto(href);
   await expect(customer.getByRole('heading', { name: 'Activate subscription' })).toBeVisible();
   await customer.getByRole('button', { name: 'Activate', exact: true }).click();
   await expect(customer.getByText('Subscription activated ✓')).toBeVisible();
   await expect(customer.getByRole('heading', { name: 'Overview' })).toBeVisible();
 
   // Single use: the same link is refused the second time.
-  await customer.goto('/' + href);
+  await customer.goto(href);
   await customer.getByRole('button', { name: 'Activate', exact: true }).click();
   await expect(customer.getByText('Link already used')).toBeVisible();
 
