@@ -254,23 +254,31 @@ async function viewLanding() {
   <footer class="footer">© ${new Date().getFullYear()} AI-DATA Portal · Investor history data sourced from ai-home.world · CRM · Hot Leads. Software supports compliance; it does not certify legality.</footer>`;
 }
 
+// Step 1: choose how you are signing in. Step 2: Google proves who you are. The choice
+// decides how a NEW account is set up; it never grants a role by itself (owner and finance
+// access come only from settings / the owner, and team members join by invitation).
+const SIGNIN_ROLES = [
+  ['director', 'Agency', 'Run an agency · AED 999/month · 999 records a day shared by your team'],
+  ['solo', 'Solo agent', 'Work on your own · AED 99/month · 99 records a day'],
+  ['member', 'Team member', 'Join your agency — use the Google email your agency invited'],
+  ['owner', 'Platform owner', 'AI-DATA owner console (owner’s Google account only)'],
+  ['finance', 'Finance admin', 'Verify payments, activation links (approved accounts only)'],
+];
+
 async function viewSignIn() {
   const c = state.cfg;
-  const personas = [
-    ['owner', 'Platform Owner', 'Owner console, unmasked data, XLSX export'], ['finance', 'Finance Admin', 'Verify cash, activation links'],
-    ['director', 'Agency Director', 'Agency AED 999 · 999/day shared'], ['leader', 'Team Leader', 'Agency team oversight'],
-    ['agent1', 'Agent (Aisha)', 'Agency agent'], ['agent2', 'Agent (Leo)', 'Agency agent'], ['solo', 'Solo Agent', 'Agent AED 99 · 99/day'],
-    ['pending', 'Pending cash customer', 'Awaiting offline payment'], ['newuser', 'New visitor', 'Onboarding from scratch'],
-  ];
   const pendingActivation = safeGet('aih_pending_activation');
+  const role = pendingActivation ? 'activation' : safeGet('aih_signin_role');
+  const chosen = SIGNIN_ROLES.find(([k]) => k === role);
+  const google = c.google_client_id ? '<div id="gsi-btn" style="min-height:44px"></div>' : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`;
   return `<div class="auth-wrap"><div class="auth-card">
     <div style="text-align:center">${logo()}</div>
-    ${c.demo_mode ? `<div class="card grid"><div class="row"><h3 style="margin:0">Sign in as</h3><span class="badge warn">DEMO · fictional</span></div>
-      ${personas.map(([k, n, d]) => `<button class="persona" data-act="demo-login" data-persona="${k}"><span class="avatar">${n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>` : ''}
+    ${pendingActivation ? '' : `<div class="card grid"><div class="row"><span class="badge gold">1</span><h3 style="margin:0">Sign in as</h3></div>
+      ${SIGNIN_ROLES.map(([k, n, d]) => `<button class="persona" data-act="pick-role" data-role="${k}" ${k === role ? 'style="border:2px solid var(--gold)" aria-pressed="true"' : 'aria-pressed="false"'}><span class="avatar">${k === role ? '✓' : n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>`}
     <div class="card grid">
-      <h2>${t('sign_in')}</h2>
+      <div class="row">${pendingActivation ? '' : '<span class="badge gold">2</span>'}<h2 style="margin:0">${t('sign_in')}${chosen ? ` · ${esc(chosen[1])}` : ''}</h2></div>
       ${pendingActivation ? `<div class="banner ok">Sign in with the Google account your activation email was sent to.</div>` : ''}
-      ${c.google_client_id ? '<div id="gsi-btn" style="min-height:44px"></div>' : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`}
+      ${role ? google : '<p class="muted">Choose how you are signing in above, then continue with your Google account.</p>'}
       <p class="small muted">We only use your Google identity (name, email, account ID). We never request access to your inbox.</p>
     </div>
     <a href="#/" class="small muted" style="text-align:center">← AI-DATA</a>
@@ -284,7 +292,16 @@ function afterSignIn() {
     window.google.accounts.id.initialize({
       client_id: state.cfg.google_client_id, nonce: state.cfg.nonce, ux_mode: 'popup',
       callback: async ({ credential }) => {
-        try { await POST('/api/auth/google', { credential }); state.cfg = null; go('#/'); } catch (e) { toast(errMsg(e), true); }
+        try {
+          await POST('/api/auth/google', { credential });
+          state.cfg = null;
+          const role = safeGet('aih_signin_role');
+          if (['owner', 'finance'].includes(role)) {
+            await loadMe();
+            if (!isFinance()) toast(`This Google account (${state.me.user.email}) has no ${role === 'owner' ? 'platform owner' : 'finance'} access.`, true);
+          }
+          go('#/');
+        } catch (e) { toast(errMsg(e), true); }
       },
     });
     window.google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', width: 360, text: 'continue_with', locale: state.lang });
@@ -302,9 +319,13 @@ function afterSignIn() {
 // ---------------------------------------------------------------------------------
 async function viewOnboarding() {
   const plans = (await GET('/api/public/plans')).plans;
+  const role = safeGet('aih_signin_role');
+  const want = role === 'solo' ? 'AGENT_MONTHLY' : 'AGENCY_MONTHLY';
+  const pick = plans.some((p) => p.code === want) ? want : plans[0]?.code;
+  const memberNote = role === 'member' ? `<div class="banner warn" style="max-width:760px;margin-bottom:16px"><b>Joining an agency?</b> Ask your agency director to invite <b>${esc(state.me.user.email)}</b> under Team, then sign in again. You only need the form below if you want your own organization.</div>` : '';
   return `<div class="page-head"><div><div class="kicker">Step 1 of 2</div><h1>${t('create_org')}</h1></div></div>
-  <form class="card grid" data-form="create-org" style="max-width:760px">
-    <div class="grid g2">${plans.map((p, i) => `<label class="persona" style="cursor:pointer"><input type="radio" name="plan" value="${p.code}" ${i === 0 ? 'checked' : ''}>
+  ${memberNote}<form class="card grid" data-form="create-org" style="max-width:760px">
+    <div class="grid g2">${plans.map((p) => `<label class="persona" style="cursor:pointer"><input type="radio" name="plan" value="${p.code}" ${p.code === pick ? 'checked' : ''}>
       <span><b>${esc(p.name)} · ${fmtMoney(p.price_usd_cents)}${t('per_month')}</b><br><span class="small muted">${fmtNum(p.cold_daily_limit)} ${t('cold_per_day')} · ${t('unlimited_members')}</span></span></label>`).join('')}</div>
     <div class="grid g2">
       <label class="field">${t('org_name')}<input type="text" name="name" required maxlength="120"></label>
@@ -834,6 +855,7 @@ const actions = {
   close: () => closeModal(),
   'close-nav': (el) => { closeModal(); go(el.getAttribute('href')); },
   'close-refresh': () => { closeModal(); render(); },
+  'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); render(); },
   'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
   logout: async () => { await POST('/api/auth/logout'); state.cfg = null; state.ih = { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null }; go('#/'); },
   notifs: async () => {
