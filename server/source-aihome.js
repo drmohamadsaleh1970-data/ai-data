@@ -245,7 +245,15 @@ export async function syncFromApi({ actor } = {}) {
   for (let page = 1; next && page <= MAX_PAGES; page++) {
     const res = await fetch(next, { headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
     if (!res.ok) throw new HttpError(502, 'AIHOME_SOURCE_ERROR', `ai-home.world answered HTTP ${res.status} on page ${page}`);
-    const body = await res.json();
+    const type = res.headers.get('content-type') || '';
+    const text = await res.text();
+    let body;
+    try { body = JSON.parse(text); } catch {
+      const hint = /html/i.test(type) || /^\s*</.test(text)
+        ? 'a web page instead of data — the feed address is probably not live yet, or it redirected to a normal page'
+        : 'something that is not valid JSON';
+      throw new HttpError(502, 'AIHOME_SOURCE_NOT_JSON', `ai-home.world returned ${hint} (HTTP ${res.status}, ${type || 'no content type'}, page ${page}, from ${new URL(res.url || next).host}${new URL(res.url || next).pathname}).`);
+    }
     const batch = Array.isArray(body) ? body : body.rows || body.data || body.items || [];
     rows.push(...batch);
     if (!Array.isArray(body) && body.next) next = new URL(body.next, next).href;
