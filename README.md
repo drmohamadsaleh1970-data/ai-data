@@ -136,11 +136,16 @@ The repository is ready to import into Vercel: `vercel.json` plus `api/index.js`
 
 | Variable | Needed for |
 |---|---|
+| `DATABASE_URL` | Permanent storage (required for real use). A PostgreSQL connection string; for Supabase use the **Transaction pooler** string (port 6543) from Connect → Direct |
 | `GOOGLE_CLIENT_ID` | Signing in (nobody can sign in without it) |
 | `OWNER_EMAIL`, `OWNER_TOTP_SECRET` | The platform owner account and its MFA |
 | `BASE_URL` (optional) | Address used in activation links; defaults to the address the request came in on |
 | PayPal variables (optional) | PayPal checkout; cash/bank payments work without them |
 
-Data currently lives in SQLite on `/tmp`: it resets on cold starts and is not shared between instances. Only the owner account (from settings) and reference data come back automatically.
+**Database.** With `DATABASE_URL` set, all data (sessions, organizations, CRM, payments, investor history) lives in PostgreSQL and is shared by every function instance. Tables are created automatically on first start. Functions run in Dublin (`dub1`, see `vercel.json`) to sit next to a Supabase project in `eu-west-1`; if your database is in another region, change `regions` to the nearest Vercel region, because every query is a network round trip.
 
-**Persistent database for production.** Vercel functions have no persistent disk, so real accounts, payments and CRM data must not live in SQLite on `/tmp`. Before taking real customers on Vercel, move the data layer to PostgreSQL (e.g. Neon from the Vercel Marketplace; `docs/ARCHITECTURE.md` describes the same tables and the locking query). The alternative is to run the Docker image on a host with a persistent volume.
+The data layer is synchronous (it was built on SQLite): `server/pg.js` runs each Postgres query in a worker thread and waits for the answer, and `tx()` takes a transaction-wide advisory lock so quota and billing transactions are serialized across instances exactly as SQLite's `BEGIN IMMEDIATE` did.
+
+Without `DATABASE_URL` the app falls back to SQLite in `/tmp`, which is reset on cold starts and not shared between instances (users get signed out, CRM data disappears). Use that only for a quick look.
+
+**Tests against Postgres.** `DATABASE_URL=postgres://... npm test` runs the whole suite against that database; each test file works in its own new schema.

@@ -54,23 +54,26 @@ function buildWhere(f) {
   if (f.year_to != null) { where.push("CAST(substr(t.registration_date,1,4) AS INTEGER) <= ?"); params.push(f.year_to); }
   if (f.has_email) where.push('ic.email IS NOT NULL');
   if (f.has_phone) where.push('ic.phone IS NOT NULL');
-  const having = f.min_transactions ? `HAVING (SELECT COUNT(*) FROM investor_transaction x WHERE x.investor_id = ic.id) >= ${Math.floor(f.min_transactions)}` : '';
+  const having = f.min_transactions ? `AND total_transactions >= ${Math.floor(f.min_transactions)}` : '';
   return { sql: where.join(' AND '), params, having };
 }
 
-// Grouped to one row per investor: a person with 15 transactions is one contact.
-// SQLite returns the bare columns from the row holding MAX(registration_date).
+// One row per investor: a person with 15 transactions is one contact. The row shows the
+// most recent matching transaction (window functions work the same in SQLite and Postgres).
 function investorQuery(f) {
   const w = buildWhere(f);
   return {
-    sql: `SELECT ic.id, ic.full_name, ic.email, ic.phone, ic.nationality, ic.rights_status, ic.suppressed,
-        ic.identity_confidence, ic.marketing_permission, ic.quality_score,
-        MAX(t.registration_date) AS last_date, t.client_role, t.country, t.city, t.area, t.property_type,
-        t.master_developer, t.project, t.size_m2, t.price_aed,
-        COUNT(t.id) AS matching_transactions,
-        (SELECT COUNT(*) FROM investor_transaction x WHERE x.investor_id = ic.id) AS total_transactions
-      FROM investor_contact ic JOIN investor_transaction t ON t.investor_id = ic.id
-      WHERE ${w.sql} GROUP BY ic.id ${w.having}`,
+    sql: `SELECT * FROM (
+        SELECT ic.id, ic.full_name, ic.email, ic.phone, ic.nationality, ic.rights_status, ic.suppressed,
+          ic.identity_confidence, ic.marketing_permission, ic.quality_score,
+          t.registration_date AS last_date, t.client_role, t.country, t.city, t.area, t.property_type,
+          t.master_developer, t.project, t.size_m2, t.price_aed,
+          COUNT(*) OVER (PARTITION BY ic.id) AS matching_transactions,
+          ROW_NUMBER() OVER (PARTITION BY ic.id ORDER BY t.registration_date DESC, t.id DESC) AS row_rank,
+          (SELECT COUNT(*) FROM investor_transaction x WHERE x.investor_id = ic.id) AS total_transactions
+        FROM investor_contact ic JOIN investor_transaction t ON t.investor_id = ic.id
+        WHERE ${w.sql}
+      ) ranked WHERE row_rank = 1 ${w.having}`,
     params: w.params,
   };
 }
@@ -347,7 +350,7 @@ export function usage(orgId, day = dubaiDay()) {
   const db = getDb();
   const row = db.prepare('SELECT * FROM daily_quota_account WHERE org_id = ? AND local_day = ?').get(orgId, day);
   const byUser = db.prepare(`SELECT u.name, l.user_id, SUM(l.delta) AS transferred FROM quota_ledger l JOIN platform_user u ON u.id = l.user_id
-    WHERE l.org_id = ? AND l.local_day = ? GROUP BY l.user_id ORDER BY transferred DESC`).all(orgId, day);
+    WHERE l.org_id = ? AND l.local_day = ? GROUP BY l.user_id, u.name ORDER BY transferred DESC`).all(orgId, day);
   const calendar = db.prepare('SELECT local_day, plan_limit, committed_used FROM daily_quota_account WHERE org_id = ? ORDER BY local_day DESC LIMIT 35').all(orgId);
   const jobs = db.prepare(`SELECT j.id, j.created_at, j.mode, j.requested, j.accepted, j.already_acquired, j.rejected, j.charged, u.name AS user_name
     FROM cold_transfer_job j JOIN platform_user u ON u.id = j.user_id WHERE j.org_id = ? ORDER BY j.id DESC LIMIT 25`).all(orgId);
