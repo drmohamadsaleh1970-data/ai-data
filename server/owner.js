@@ -60,6 +60,20 @@ export function exportFile(jobId, user) {
   return { file: path.join(EXPORT_DIR, job.file_name), name: `ai-data-investors-${job.id}.xlsx` };
 }
 
+// Everything waiting for owner/finance: payments to confirm, and confirmed payments whose
+// customer has not activated yet (with their current code's expiry).
+export function approvals() {
+  const db = getDb();
+  const pending_cash = db.prepare(`SELECT c.*, o.name AS org_name, u.email AS requested_by_email, u.name AS requested_by_name, u.phone AS requested_by_phone
+    FROM cash_payment_request c JOIN organization o ON o.id = c.org_id JOIN platform_user u ON u.id = c.requested_by WHERE c.status = 'PENDING_PAYMENT' ORDER BY c.id`).all();
+  const awaiting_activation = db.prepare(`SELECT s.id, s.plan_code, s.created_at, o.name AS org_name,
+      (SELECT u.email FROM activation_magic_link l JOIN platform_user u ON u.id = l.user_id WHERE l.subscription_id = s.id ORDER BY l.id DESC LIMIT 1) AS customer_email,
+      (SELECT u.phone FROM activation_magic_link l JOIN platform_user u ON u.id = l.user_id WHERE l.subscription_id = s.id ORDER BY l.id DESC LIMIT 1) AS customer_phone,
+      (SELECT l.expires_at FROM activation_magic_link l WHERE l.subscription_id = s.id AND l.used_at IS NULL AND l.revoked_at IS NULL ORDER BY l.id DESC LIMIT 1) AS code_expires_at
+    FROM subscription s JOIN organization o ON o.id = s.org_id WHERE s.status = 'AWAITING_ACTIVATION' ORDER BY s.id`).all();
+  return { pending_cash, awaiting_activation, counts: { to_confirm: pending_cash.length, awaiting_activation: awaiting_activation.length } };
+}
+
 export function dashboard() {
   const db = getDb();
   const orgs = db.prepare('SELECT o.id, o.name, o.kind, o.created_at, u.email AS owner_email, (SELECT COUNT(*) FROM membership m WHERE m.org_id = o.id AND m.status=\'ACTIVE\') AS members FROM organization o JOIN platform_user u ON u.id = o.owner_user_id ORDER BY o.id').all();
@@ -82,8 +96,7 @@ export function dashboard() {
     hot_revenue_this_month: db.prepare("SELECT COALESCE(SUM(amount_cents),0) AS cents, COUNT(*) AS leads FROM hot_lead_billing_ledger WHERE substr(created_at,1,7) = ?").get(month),
     overdue: withSub.filter((o) => ['PAST_DUE', 'SUSPENDED'].includes(o.status)),
     organizations: withSub,
-    pending_cash: db.prepare("SELECT c.*, o.name AS org_name, u.email AS requested_by_email FROM cash_payment_request c JOIN organization o ON o.id = c.org_id JOIN platform_user u ON u.id = c.requested_by WHERE c.status = 'PENDING_PAYMENT' ORDER BY c.id").all(),
-    awaiting_activation: db.prepare("SELECT s.id, s.plan_code, s.created_at, o.name AS org_name FROM subscription s JOIN organization o ON o.id = s.org_id WHERE s.status = 'AWAITING_ACTIVATION'").all(),
+    ...approvals(),
     cold_usage_today: db.prepare('SELECT o.name, q.local_day, q.plan_limit, q.committed_used FROM daily_quota_account q JOIN organization o ON o.id = q.org_id ORDER BY q.local_day DESC, q.committed_used DESC LIMIT 30').all(),
     data: db.prepare("SELECT COUNT(*) AS investors, SUM(CASE WHEN rights_status='APPROVED' THEN 1 ELSE 0 END) AS approved, SUM(CASE WHEN rights_status='RESTRICTED_PENDING_REVIEW' THEN 1 ELSE 0 END) AS pending, SUM(suppressed) AS suppressed, (SELECT COUNT(*) FROM investor_transaction) AS transactions FROM investor_contact").get(),
     exports: db.prepare('SELECT e.id, e.row_count, e.status, e.created_at, u.email FROM owner_export_job e JOIN platform_user u ON u.id = e.user_id ORDER BY e.id DESC LIMIT 20').all(),

@@ -39,6 +39,29 @@ export class HttpError extends Error {
   }
 }
 
+// Mobile numbers are stored in international form (+9715xxxxxxxx). A local UAE number
+// starting with 0 (e.g. 050 123 4567) is read as +971; anything else needs its country code.
+export function requireMobile(input) {
+  let p = String(input ?? '').trim().replace(/[\s().-]/g, '');
+  if (p.startsWith('00')) p = '+' + p.slice(2);
+  else if (/^0\d{8,9}$/.test(p)) p = '+971' + p.slice(1);
+  else if (/^\d{10,15}$/.test(p)) p = '+' + p;
+  if (!/^\+[1-9]\d{7,14}$/.test(p)) throw new HttpError(400, 'INVALID_PHONE', 'Enter a mobile number with country code, e.g. +971 50 123 4567.');
+  return p;
+}
+
+export function cleanName(input) {
+  const n = String(input ?? '').trim().replace(/\s+/g, ' ');
+  if (n.length < 2 || n.length > 120 || !/\p{L}/u.test(n)) throw new HttpError(400, 'INVALID_NAME', 'Enter your full name.');
+  return n;
+}
+
+export const cleanEmail = (input) => {
+  const e = String(input ?? '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) || e.length > 200) throw new HttpError(400, 'INVALID_EMAIL', 'Enter a valid email address.');
+  return e;
+};
+
 export function audit({ actor, org, action, target, meta }) {
   getDb().prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target, meta_json) VALUES (?,?,?,?,?,?)')
     .run(iso(), actor ?? null, org ?? null, action, target ?? null, meta ? JSON.stringify(meta) : null);

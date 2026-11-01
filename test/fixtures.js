@@ -63,8 +63,10 @@ export function seedFixtures({ investors = 600 } = {}) {
   }
   db.exec('COMMIT');
 
-  const user = (sub, email, name, role = null, mfa = null) => Number(db.prepare('INSERT INTO platform_user (google_sub, email, name, platform_role, mfa_secret, created_at) VALUES (?,?,?,?,?,?)')
-    .run(`fixture|${sub}`, email, name, role, mfa, ts).lastInsertRowid);
+  // Fictional profiles: name + a reserved-looking UAE mobile, so no one is asked to complete a profile.
+  let phoneSeq = 0;
+  const user = (sub, email, name, role = null, mfa = null) => Number(db.prepare('INSERT INTO platform_user (google_sub, email, name, phone, profile_completed_at, platform_role, mfa_secret, created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(`fixture|${sub}`, email, name, `+97150000${String(++phoneSeq).padStart(4, '0')}`, ts, role, mfa, ts).lastInsertRowid);
   user('owner', 'owner@test.ai-data.example', 'Platform Owner (TEST)', 'PLATFORM_OWNER', FIXTURE_TOTP_SECRET);
   user('finance', 'finance@test.ai-data.example', 'Finance Admin (TEST)', 'PLATFORM_FINANCE_ADMIN', FIXTURE_TOTP_SECRET);
   const director = user('director', 'director@marinacrest.example', 'Dana Director (TEST)');

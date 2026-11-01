@@ -65,8 +65,10 @@ export function seedDemo({ investors = 600 } = {}) {
   }
   db.exec('COMMIT');
 
-  const user = (sub, email, name, role = null, mfa = null) => Number(db.prepare('INSERT INTO platform_user (google_sub, email, name, platform_role, mfa_secret, created_at) VALUES (?,?,?,?,?,?)')
-    .run(`demo|${sub}`, email, name, role, mfa, ts).lastInsertRowid);
+  // Fictional profiles: name + a reserved-looking UAE mobile, so no one is asked to complete a profile.
+  let phoneSeq = 0;
+  const user = (sub, email, name, role = null, mfa = null) => Number(db.prepare('INSERT INTO platform_user (google_sub, email, name, phone, profile_completed_at, platform_role, mfa_secret, created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(`demo|${sub}`, email, name, `+97150000${String(++phoneSeq).padStart(4, '0')}`, ts, role, mfa, ts).lastInsertRowid);
   user('owner', 'owner@demo.ai-data.example', 'Platform Owner (DEMO)', 'PLATFORM_OWNER', DEMO_TOTP_SECRET);
   user('finance', 'finance@demo.ai-data.example', 'Finance Admin (DEMO)', 'PLATFORM_FINANCE_ADMIN', DEMO_TOTP_SECRET);
   const director = user('director', 'director@marinacrest.example', 'Dana Director (DEMO)');

@@ -6,7 +6,7 @@ import { config, paypalConfigured } from './config.js';
 import { HttpError, iso, audit, randomToken, sha256, newTotpSecret, totp, dubaiDay } from './util.js';
 import {
   loadSession, csrfGuard, requireUser, requireOrgPermission, requirePlatformRole, requireRecentMfa, verifyMfa,
-  createSession, destroySession, verifyGoogleCredential, upsertGoogleUser, ROLE_PERMISSIONS, ORG_ROLES, readCookie,
+  createSession, destroySession, verifyGoogleCredential, upsertGoogleUser, ROLE_PERMISSIONS, ORG_ROLES, readCookie, saveProfile, checkProfile,
 } from './auth.js';
 import { entitlementSummary } from './entitlements.js';
 import * as cold from './cold.js';
@@ -15,6 +15,7 @@ import * as crm from './crm.js';
 import * as hot from './hot.js';
 import * as owner from './owner.js';
 import * as source from './source-aihome.js';
+import { deliverQueued, emailConfigured } from './mail.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
 
@@ -63,8 +64,14 @@ export function createApp(options = {}) {
     res.json({ google_client_id: config.googleClientId || null, nonce, demo_mode: config.demoMode, paypal_connected: paypalConfigured() });
   });
   r.post('/auth/google', ok(async (req, res) => {
+    // Validate the typed details first, so a bad phone number never creates an account.
+    const profile = req.body.profile ? checkProfile(req.body.profile) : null;
     const ident = await verifyGoogleCredential(String(req.body.credential || ''), readCookie(req, 'aih_nonce'));
+    if (profile && profile.email !== String(ident.email).toLowerCase()) {
+      throw new HttpError(400, 'EMAIL_MISMATCH', `You entered ${profile.email}, but signed in with Google as ${ident.email}. Use the Google account for the email you entered, or correct the email.`);
+    }
     const userId = upsertGoogleUser(ident);
+    if (profile) saveProfile(userId, profile);
     crm.acceptInvitations(getDb().prepare('SELECT * FROM platform_user WHERE id = ?').get(userId));
     createSession(res, userId);
     audit({ actor: userId, action: 'LOGIN_GOOGLE' });
@@ -95,6 +102,7 @@ export function createApp(options = {}) {
     }));
     r.get('/test/totp', requireUser, ok((req) => ({ code: totp(req.user.mfa_secret) })));
   }
+  r.post('/auth/check-profile', ok((req) => checkProfile(req.body || {})));
   r.post('/auth/logout', ok((req, res) => { destroySession(req, res); return { ok: true }; }));
   r.post('/public/inquiry', ok((req) => hot.intakeInquiry({ siteKey: req.get('x-site-key') || req.body.site_key, body: req.body || {}, ip: req.ip, origin: req.get('origin') })));
   r.post('/public/search-event', ok((req) => hot.recordSearchEvent(req.body || {})));
@@ -107,7 +115,11 @@ export function createApp(options = {}) {
     const memberships = db.prepare("SELECT m.org_id, m.role, o.name, o.kind FROM membership m JOIN organization o ON o.id = m.org_id WHERE m.user_id = ? AND m.status='ACTIVE'").all(req.user.id);
     return {
       authenticated: true,
-      user: { id: req.user.id, name: req.user.name, email: req.user.email, locale: req.user.locale, platform_role: req.user.platform_role, mfa_enrolled: !!req.user.mfa_secret },
+      user: { id: req.user.id, name: req.user.name, email: req.user.email, phone: req.user.phone || null, locale: req.user.locale, platform_role: req.user.platform_role, mfa_enrolled: !!req.user.mfa_secret },
+      profile_complete: !!(req.user.phone && req.user.profile_completed_at),
+      my_quota: req.membership ? cold.userQuota(req.membership.org_id, req.user.id) : null,
+      activation_pending: req.membership ? !!billing.pendingActivation(req.membership.org_id, req.user.id) : false,
+      approvals_waiting: ['PLATFORM_OWNER', 'PLATFORM_FINANCE_ADMIN'].includes(req.user.platform_role) ? owner.approvals().counts : null,
       memberships,
       active_org: req.membership ? memberships.find((m) => m.org_id === req.membership.org_id) : null,
       permissions: req.membership ? ROLE_PERMISSIONS[req.membership.role] : [],
@@ -122,6 +134,7 @@ export function createApp(options = {}) {
     getDb().prepare('UPDATE session SET active_org_id = ? WHERE id_hash = ?').run(Number(req.body.org_id), req.session.id_hash);
     return { ok: true };
   }));
+  r.post('/me/profile', requireUser, ok((req) => saveProfile(req.user.id, req.body || {})));
   r.post('/me/preferences', requireUser, ok((req) => {
     if (!['en', 'ar', 'fr', 'ru', 'tr'].includes(req.body.locale)) throw new HttpError(400, 'UNSUPPORTED_LOCALE');
     getDb().prepare('UPDATE platform_user SET locale = ? WHERE id = ?').run(req.body.locale, req.user.id);
@@ -153,14 +166,21 @@ export function createApp(options = {}) {
   }));
   r.get('/org/members', requireOrgPermission('usage.view'), ok((req) => crm.members(orgId(req))));
   r.post('/org/invitations', requireOrgPermission('members.manage'), ok((req) => crm.invite(req, req.body || {})));
+  r.patch('/org/members/:userId', requireOrgPermission('members.manage'), ok((req) => crm.setMemberCap(req, req.params.userId, req.body?.daily_cap)));
   r.delete('/org/members/:userId', requireOrgPermission('members.manage'), ok((req) => { crm.removeMember(req, req.params.userId); return { ok: true }; }));
 
   // --- Billing ---------------------------------------------------------------------------
-  r.get('/billing', requireOrgPermission('usage.view'), ok((req) => billing.billingView(orgId(req))));
+  r.get('/billing', requireOrgPermission('usage.view'), ok((req) => billing.billingView(orgId(req), req.user.id)));
   r.post('/billing/paypal', requireOrgPermission('billing.manage'), ok((req) => billing.startPaypalCheckout({ orgId: orgId(req), planCode: req.body.plan, user: req.user })));
-  r.post('/billing/cash', requireOrgPermission('billing.manage'), ok((req) => billing.requestCash({ orgId: orgId(req), planCode: req.body.plan, user: req.user, note: req.body.note })));
+  r.post('/billing/cash', requireOrgPermission('billing.manage'), ok(async (req) => {
+    const out = billing.requestCash({ orgId: orgId(req), planCode: req.body.plan, user: req.user, note: req.body.note, baseUrl: publicBase(req) });
+    await deliverQueued();
+    return out;
+  }));
   r.post('/billing/activate', requireUser, ok((req) => {
-    const out = billing.activateMagicLink({ token: req.body.token, user: req.user });
+    const out = req.body.code
+      ? billing.activateCode({ code: req.body.code, user: req.user })
+      : billing.activateMagicLink({ token: req.body.token, user: req.user });
     if (out.error) throw new HttpError(400, out.error);
     getDb().prepare('UPDATE session SET active_org_id = ? WHERE id_hash = ?').run(out.org_id, req.session.id_hash);
     return out;
@@ -169,7 +189,7 @@ export function createApp(options = {}) {
   // --- Cold data -------------------------------------------------------------------------
   r.get('/cold/filters', requireOrgPermission('cold.search'), ok(() => cold.filterOptions()));
   r.post('/cold/search', requireOrgPermission('cold.search'), ok((req) => cold.search({ orgId: orgId(req), filter: req.body.filter, cursor: req.body.cursor, limit: req.body.limit })));
-  r.post('/cold/transfers/estimate', requireOrgPermission('cold.transfer'), ok((req) => cold.estimate({ orgId: orgId(req), selection: req.body.selection })));
+  r.post('/cold/transfers/estimate', requireOrgPermission('cold.transfer'), ok((req) => cold.estimate({ orgId: orgId(req), userId: req.user.id, selection: req.body.selection })));
   r.post('/cold/transfers', requireOrgPermission('cold.transfer'), ok((req) => cold.transfer({
     membership: req.membership, selection: req.body.selection, idempotencyKey: req.get('idempotency-key'),
     allowPartial: req.body.allow_partial === true, assignTo: req.body.assign_to, campaignTag: req.body.campaign_tag,
@@ -236,16 +256,25 @@ export function createApp(options = {}) {
     // The path is server-generated (never user input), so serving from a dot-folder is safe.
     res.download(f.file, f.name, { dotfiles: 'allow' });
   });
-  r.post('/owner/cash/:id/verify', FINANCE, requireRecentMfa, ok((req) => billing.verifyCash({
-    requestId: req.params.id, approver: req.user, amountCents: Math.round(Number(req.body.amount_aed ?? req.body.amount_usd) * 100), currency: req.body.currency || 'AED',
-    paidOn: req.body.paid_on, channel: req.body.channel, receiptNo: req.body.receipt_no, baseUrl: publicBase(req),
-  })));
+  r.get('/owner/approvals', FINANCE, ok(() => ({ ...owner.approvals(), email_configured: emailConfigured() })));
+  r.post('/owner/cash/:id/verify', FINANCE, requireRecentMfa, ok(async (req) => {
+    const out = billing.verifyCash({
+      requestId: req.params.id, approver: req.user, amountCents: Math.round(Number(req.body.amount_aed ?? req.body.amount_usd) * 100), currency: req.body.currency || 'AED',
+      paidOn: req.body.paid_on, channel: req.body.channel, receiptNo: req.body.receipt_no, baseUrl: publicBase(req),
+    });
+    const mail = await deliverQueued();
+    return { ...out, emailed: mail.sent > 0, email_configured: emailConfigured() };
+  }));
   r.post('/owner/cash/:id/reject', FINANCE, ok((req) => {
     getDb().prepare("UPDATE cash_payment_request SET status = 'REJECTED' WHERE id = ? AND status = 'PENDING_PAYMENT'").run(Number(req.params.id));
     audit({ actor: req.user.id, action: 'CASH_REJECTED', target: `cash:${req.params.id}` });
     return { ok: true };
   }));
-  r.post('/owner/subscriptions/:id/reissue-link', FINANCE, requireRecentMfa, ok((req) => billing.reissueMagicLink({ subscriptionId: req.params.id, actor: req.user, baseUrl: publicBase(req) })));
+  r.post('/owner/subscriptions/:id/reissue-link', FINANCE, requireRecentMfa, ok(async (req) => {
+    const out = billing.reissueMagicLink({ subscriptionId: req.params.id, actor: req.user, baseUrl: publicBase(req) });
+    const mail = await deliverQueued();
+    return { ...out, emailed: mail.sent > 0, email_configured: emailConfigured() };
+  }));
   r.post('/owner/subscriptions/:id/terminate', FINANCE, requireRecentMfa, ok((req) => { billing.terminateSubscription({ subscriptionId: req.params.id, actor: req.user, reason: req.body.reason }); return { ok: true }; }));
   r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources(), site_keys: hot.siteKeys() })));
   r.post('/owner/hot/site-keys', OWNER, ok((req) => hot.createSiteKey({ actor: req.user, orgId: req.body.org_id || null, label: req.body.label, allowedOrigin: req.body.allowed_origin })));

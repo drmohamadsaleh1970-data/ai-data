@@ -49,3 +49,22 @@ test('the owner from settings is linked on Google sign-in; other accounts never 
   assert.equal(ensureOwner(), ownerId);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM platform_user WHERE platform_role = 'PLATFORM_OWNER'").get().n, 1);
 });
+
+test('several owners: every listed email is an owner, the first one is the main owner', async () => {
+  const { upsertGoogleUser } = await import('../server/auth.js');
+  const { ensureOwner } = await import('../server/seed.js');
+  const before = process.env.OWNER_EMAIL;
+  process.env.OWNER_EMAIL = 'owner@example.com, Second.Owner@Example.com';
+  try {
+    const mainId = ensureOwner();
+    assert.equal(db.prepare('SELECT lower(email) AS e FROM platform_user WHERE id = ?').get(mainId).e, 'owner@example.com');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM platform_user WHERE platform_role = 'PLATFORM_OWNER'").get().n, 2);
+    const second = upsertGoogleUser({ sub: 'google-owner-2', email: 'second.owner@example.com', name: 'Second' });
+    assert.notEqual(second, mainId);
+    assert.equal(db.prepare('SELECT platform_role, google_sub FROM platform_user WHERE id = ?').get(second).platform_role, 'PLATFORM_OWNER');
+    assert.equal(ensureOwner(), mainId, 'main owner stays first');
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM platform_user WHERE platform_role = 'PLATFORM_OWNER'").get().n, 2);
+  } finally {
+    process.env.OWNER_EMAIL = before;
+  }
+});

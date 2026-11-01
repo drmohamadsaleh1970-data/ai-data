@@ -116,7 +116,7 @@ function setLang(l, persist = true) {
 const APP_ROUTES = {
   overview: viewOverview, 'investor-history': viewInvestorHistory, 'my-cold': viewMyCold, hot: viewHot, crm: viewCrm,
   team: viewTeam, reports: viewReports, billing: viewBilling, integrations: viewIntegrations, settings: viewSettings,
-  onboarding: viewOnboarding, owner: viewOwner, activate: viewActivate,
+  onboarding: viewOnboarding, owner: viewOwner, activate: viewActivate, profile: viewProfile,
 };
 
 async function render() {
@@ -138,7 +138,9 @@ async function render() {
     const hasOrg = !!state.me.active_org;
     let name = route;
     if (!APP_ROUTES[name] || name === '' || name === 'signin') name = hasOrg ? 'overview' : isFinance() ? 'owner' : 'onboarding';
-    if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations'].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
+    // Everyone gives a name and mobile number once; until then this is the only page.
+    if (!state.me.profile_complete && name !== 'activate') name = 'profile';
+    if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations', 'profile'].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
     const html = await APP_ROUTES[name](parts.slice(1), query);
     app.innerHTML = shell(name, parts, html);
     afterRender();
@@ -153,6 +155,19 @@ window.addEventListener('hashchange', render);
 // Shell
 // ---------------------------------------------------------------------------------
 const logo = (dark) => `<a class="logo" href="#/"><span class="logo-mark">A</span><span>AI-DATA<small${dark ? '' : ''}>Investor Intelligence</small></span></a>`;
+
+// One clear call to action at the top of every page while something needs doing.
+function actionBanner(name, parts) {
+  const m = state.me;
+  if (m.activation_pending && name !== 'billing') {
+    return `<a class="banner ok action-banner" href="#/billing" style="display:flex;gap:10px;align-items:center;margin-bottom:16px;text-decoration:none"><b>✓ Payment confirmed.</b> Your activation code is ready — activate your data access now →</a>`;
+  }
+  const w = m.approvals_waiting;
+  if (w?.to_confirm && !(name === 'owner' && ['approvals', 'finance'].includes(parts[1]))) {
+    return `<a class="banner warn action-banner" href="#/owner/approvals" style="display:flex;gap:10px;align-items:center;margin-bottom:16px;text-decoration:none"><b>${w.to_confirm} payment${w.to_confirm > 1 ? 's' : ''} waiting for your confirmation.</b> Open Payment approvals →</a>`;
+  }
+  return '';
+}
 
 function shell(name, parts, content) {
   const link = (href, key, ico, active) => `<a class="nav-link ${active ? 'active' : ''}" href="${href}"><span class="ico">${ico}</span>${esc(t(key))}</a>`;
@@ -175,8 +190,10 @@ function shell(name, parts, content) {
   if (isFinance()) {
     const sub = parts[1] || 'dashboard';
     nav += `<div class="nav-group">${t('owner_console')}</div>`;
+    const waiting = (m.approvals_waiting?.to_confirm || 0) + (m.approvals_waiting?.awaiting_activation || 0);
+    const approvalsActive = name === 'owner' && (sub === 'approvals' || sub === 'finance');
+    nav += `<a class="nav-link ${approvalsActive ? 'active' : ''}" href="#/owner/approvals"><span class="ico">✓</span>Payment approvals${waiting ? ` <span class="badge ${m.approvals_waiting.to_confirm ? 'bad' : 'gold'}" style="margin-inline-start:auto" aria-label="${waiting} waiting">${waiting}</span>` : ''}</a>`;
     nav += link('#/owner', 'owner_dashboard', '◆', name === 'owner' && sub === 'dashboard');
-    nav += link('#/owner/finance', 'finance', '$', name === 'owner' && sub === 'finance');
     if (isOwner()) {
       nav += link('#/owner/source', 'data_source', '⇩', name === 'owner' && sub === 'source');
       nav += link('#/owner/data', 'master_data', '⛁', name === 'owner' && sub === 'data');
@@ -190,7 +207,8 @@ function shell(name, parts, content) {
     ? `<select data-change="switch-org" aria-label="Organization" style="width:auto">${m.memberships.map((x) => `<option value="${x.org_id}" ${org?.org_id === x.org_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`
     : '';
   const q = m.entitlements?.cold?.quota;
-  const quota = q ? `<div class="quota-pill" title="${esc(t('resets_midnight'))}">❄ ${fmtNum(q.committed_used)} / ${fmtNum(q.plan_limit)}<span class="bar"><i style="width:${Math.min(100, (q.committed_used / q.plan_limit) * 100)}%"></i></span><span class="hide-sm">${fmtNum(q.remaining)} ${t('remaining')}</span></div>` : '';
+  const myCap = m.my_quota?.cap != null ? `<span class="hide-sm" title="Your personal daily limit">· you ${fmtNum(m.my_quota.used)}/${fmtNum(m.my_quota.cap)}</span>` : '';
+  const quota = q ? `<div class="quota-pill" title="${esc(t('resets_midnight'))}">❄ ${fmtNum(q.committed_used)} / ${fmtNum(q.plan_limit)}<span class="bar"><i style="width:${Math.min(100, (q.committed_used / q.plan_limit) * 100)}%"></i></span><span class="hide-sm">${fmtNum(q.remaining)} ${t('remaining')}</span>${myCap}</div>` : '';
   return `${m.demo_mode ? `<div class="demo-strip">${t('demo_banner')}</div>` : ''}
   <div class="shell">
     <aside class="side">${logo(true)}${nav}
@@ -205,7 +223,7 @@ function shell(name, parts, content) {
         <button class="btn ghost bell" data-act="notifs" aria-label="${t('notifications')}">🔔${m.unread_notifications ? `<span class="count">${m.unread_notifications}</span>` : ''}</button>
         <button class="btn sm" data-act="logout">${t('sign_out')}</button>
       </header>
-      <main class="page">${content}</main>
+      <main class="page">${actionBanner(name, parts)}${content}</main>
     </div>
   </div>`;
 }
@@ -265,21 +283,58 @@ const SIGNIN_ROLES = [
   ['finance', 'Finance admin', 'Verify payments, activation links (approved accounts only)'],
 ];
 
+// Details typed before Google sign-in live only in this browser tab until sign-in ends.
+const SIGNUP_KEY = 'aih_signup_profile';
+function signupProfile() { try { return JSON.parse(sessionStorage.getItem(SIGNUP_KEY) || 'null'); } catch { return null; } }
+function setSignupProfile(p) { try { p ? sessionStorage.setItem(SIGNUP_KEY, JSON.stringify(p)) : sessionStorage.removeItem(SIGNUP_KEY); } catch { /* private mode */ } }
+
+const ROLE_HINTS = {
+  director: 'You will create your agency account next. Your team shares the agency\'s 999 records a day; you can give each member a personal daily limit.',
+  solo: 'You will create your agent account next: 99 records a day for you.',
+  member: 'Use the same email your agency director invited. Your daily limit comes from your agency\'s plan and any personal limit your director sets.',
+  owner: 'Only the platform owner\'s Google account is accepted.',
+  finance: 'Only approved finance accounts are accepted.',
+};
+
 async function viewSignIn() {
   const c = state.cfg;
   const pendingActivation = safeGet('aih_pending_activation');
   const role = pendingActivation ? 'activation' : safeGet('aih_signin_role');
   const chosen = SIGNIN_ROLES.find(([k]) => k === role);
+  const profile = signupProfile();
+  const returning = state.signinReturning === true;
+  const ready = !!role && (pendingActivation || returning || !!profile);
   const google = c.google_client_id ? '<div id="gsi-btn" style="min-height:44px"></div>' : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`;
+  const step = (n, title, done) => `<div class="row"><span class="badge ${done ? 'ok' : 'gold'}">${done ? '✓' : n}</span><h3 style="margin:0">${title}</h3></div>`;
+
+  const roleCard = pendingActivation ? '' : `<div class="card grid">${step(1, 'Choose your account type', !!role)}
+      ${SIGNIN_ROLES.map(([k, n, d]) => `<button class="persona" data-act="pick-role" data-role="${k}" ${k === role ? 'style="border:2px solid var(--gold)" aria-pressed="true"' : 'aria-pressed="false"'}><span class="avatar">${k === role ? '✓' : n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>`;
+
+  let details = '';
+  if (role && !pendingActivation) {
+    details = profile && !returning
+      ? `<div class="card grid">${step(2, 'Your details', true)}
+          <div class="kv"><span class="k">Full name</span><span class="v">${esc(profile.full_name)}</span><span class="k">Mobile</span><span class="v mono">${esc(profile.phone)}</span><span class="k">Email</span><span class="v">${esc(profile.email)}</span></div>
+          <button class="btn sm ghost" data-act="signup-edit" style="justify-self:start">Edit details</button></div>`
+      : returning
+        ? `<div class="card grid">${step(2, 'Welcome back', true)}<p class="small muted" style="margin:0">Sign in with the Google account you registered with. <a href="#" data-act="signup-new">New here? Enter your details</a></p></div>`
+        : `<form class="card grid" data-form="signup-profile" style="gap:12px">${step(2, 'Your details', false)}
+            <p class="small muted" style="margin:0">${esc(ROLE_HINTS[role] || '')}</p>
+            <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" placeholder="e.g. Sara Al Mansouri"></label>
+            <label class="field">Mobile number<input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="+971 50 123 4567"></label>
+            <label class="field">Email<input type="email" name="email" required autocomplete="email" placeholder="name@company.com"><span class="small muted">Must be the email of the Google account you will sign in with.</span></label>
+            <div class="row"><button class="btn primary">Continue</button><a href="#" class="small" data-act="signup-returning">I already have an account</a></div>
+          </form>`;
+  }
+
   return `<div class="auth-wrap"><div class="auth-card">
     <div style="text-align:center">${logo()}</div>
-    ${pendingActivation ? '' : `<div class="card grid"><div class="row"><span class="badge gold">1</span><h3 style="margin:0">Sign in as</h3></div>
-      ${SIGNIN_ROLES.map(([k, n, d]) => `<button class="persona" data-act="pick-role" data-role="${k}" ${k === role ? 'style="border:2px solid var(--gold)" aria-pressed="true"' : 'aria-pressed="false"'}><span class="avatar">${k === role ? '✓' : n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>`}
+    ${roleCard}${details}
     <div class="card grid">
-      <div class="row">${pendingActivation ? '' : '<span class="badge gold">2</span>'}<h2 style="margin:0">${t('sign_in')}${chosen ? ` · ${esc(chosen[1])}` : ''}</h2></div>
+      ${pendingActivation ? `<h2 style="margin:0">${t('sign_in')}</h2>` : step(3, `${t('sign_in')} with Google${chosen ? ` · ${esc(chosen[1])}` : ''}`, false)}
       ${pendingActivation ? `<div class="banner ok">Sign in with the Google account your activation email was sent to.</div>` : ''}
-      ${role ? google : '<p class="muted">Choose how you are signing in above, then continue with your Google account.</p>'}
-      <p class="small muted">We only use your Google identity (name, email, account ID). We never request access to your inbox.</p>
+      ${ready ? google : `<p class="muted" style="margin:0">${role ? 'Enter your details above, then continue with Google.' : 'Choose your account type above.'}</p>`}
+      <p class="small muted">We only use your Google identity (name, email, account ID) to sign you in. We never request access to your inbox.</p>
     </div>
     <a href="#/" class="small muted" style="text-align:center">← AI-DATA</a>
   </div></div>`;
@@ -293,7 +348,10 @@ function afterSignIn() {
       client_id: state.cfg.google_client_id, nonce: state.cfg.nonce, ux_mode: 'popup',
       callback: async ({ credential }) => {
         try {
-          await POST('/api/auth/google', { credential });
+          const profile = state.signinReturning ? null : signupProfile();
+          await POST('/api/auth/google', { credential, ...(profile ? { profile } : {}) });
+          setSignupProfile(null);
+          state.signinReturning = false;
           state.cfg = null;
           const role = safeGet('aih_signin_role');
           if (['owner', 'finance'].includes(role)) {
@@ -312,6 +370,23 @@ function afterSignIn() {
   s.async = true;
   s.onload = init;
   document.head.append(s);
+}
+
+// ---------------------------------------------------------------------------------
+// Profile: name + mobile for every account (asked once, editable later)
+// ---------------------------------------------------------------------------------
+async function viewProfile() {
+  const u = state.me.user;
+  const first = !state.me.profile_complete;
+  return `<div class="page-head"><div><div class="kicker">${first ? 'One more step' : 'Account'}</div><h1>${first ? 'Complete your profile' : 'Your profile'}</h1></div></div>
+  ${first ? '<div class="banner cold" style="max-width:640px;margin-bottom:16px">Every account needs a full name and a mobile number before continuing.</div>' : ''}
+  <form class="card grid" data-form="profile" style="max-width:640px;gap:12px">
+    <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" value="${esc(u.name || '')}"></label>
+    <label class="field">Mobile number<input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="+971 50 123 4567" value="${esc(u.phone || '')}"></label>
+    <label class="field">Email (Google account)<input type="email" value="${esc(u.email)}" disabled></label>
+    ${state.me.my_quota ? `<div class="small muted">Your daily limit in ${esc(state.me.active_org?.name || '')}: ${state.me.my_quota.cap == null ? 'shared account allowance (no personal limit)' : `<b>${fmtNum(state.me.my_quota.cap)}</b> records a day`}</div>` : ''}
+    <div class="row"><button class="btn primary">${first ? 'Save and continue' : 'Save'}</button></div>
+  </form>`;
 }
 
 // ---------------------------------------------------------------------------------
@@ -339,6 +414,15 @@ async function viewOnboarding() {
     <div><button class="btn gold">${t('continue')}</button></div>
   </form>`;
 }
+
+const ACTIVATION_ERRORS = {
+  LINK_INVALID: 'That activation code is not valid. Check the 8 characters and try again.',
+  CODE_INVALID: 'Activation codes have 8 characters, like ABCD-2345.',
+  LINK_ALREADY_USED: 'This code was already used — your subscription should be active.',
+  LINK_REVOKED: 'A newer code was sent to you. Use the latest code (see your notifications or Billing page).',
+  LINK_EXPIRED: 'This code has expired. Ask AI-DATA for a new code.',
+  LINK_WRONG_ACCOUNT: 'This code belongs to a different account. Sign in with the Google account that requested the payment.',
+};
 
 async function viewActivate([token]) {
   return `<div class="page-head"><h1>${t('activate_title')}</h1></div>
@@ -487,6 +571,7 @@ async function openTransfer(selection) {
       <span class="k">${t('blocked_rights')}</span><span class="v">${fmtNum(est.blocked)}</span>
       <span class="k">${t('new_count_quota')}</span><span class="v" style="color:var(--cold)">${fmtNum(est.new_chargeable)}</span>
       <span class="k total">${t('remaining')} (${q ? esc(q.day) : '—'}, Asia/Dubai)</span><span class="v total">${q ? `${fmtNum(q.remaining)} / ${fmtNum(q.limit)}` : '—'}</span>
+      ${q?.my_cap != null ? `<span class="k">Your personal daily limit</span><span class="v">${fmtNum(q.my_used)} / ${fmtNum(q.my_cap)} used</span>` : ''}
       <span class="k">${t('deliverable')}</span><span class="v" style="color:var(--ok)">${fmtNum(est.deliverable_now)}</span>
     </div>
     ${Object.keys(est.blocked_reasons).length ? `<div class="small muted">${Object.entries(est.blocked_reasons).map(([k, v]) => `${esc(REASON_LABEL[k] || human(k))}: ${v}`).join(' · ')}</div>` : ''}
@@ -634,17 +719,32 @@ async function viewLead(id) {
 
 async function viewTeam() {
   const m = await GET('/api/org/members');
-  return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('team')}</h1></div><div class="spacer"></div><span class="badge gold">Seats: ${t('unlimited_members')}</span></div>
+  const manage = can('members.manage');
+  const limit = m.account_limit;
+  const capCell = (x) => {
+    const used = `${fmtNum(x.used_today)}${x.daily_cap != null ? ` / ${fmtNum(x.daily_cap)}` : ''}`;
+    if (!manage || x.role === 'ORG_OWNER') return `<span class="small">${used}${x.daily_cap == null ? ' <span class="muted">· shared</span>' : ''}</span>`;
+    return `<form class="row" data-form="member-cap" data-id="${x.user_id}" style="gap:6px;flex-wrap:nowrap">
+      <input type="number" name="daily_cap" min="0" ${limit ? `max="${limit}"` : ''} value="${x.daily_cap ?? ''}" placeholder="No limit" style="width:96px" aria-label="Daily limit for ${esc(x.name)}">
+      <button class="btn sm">Save</button><span class="small muted">${fmtNum(x.used_today)} today</span></form>`;
+  };
+  return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('team')}</h1></div><div class="spacer"></div><span class="badge gold">Seats: ${t('unlimited_members')}</span>${limit ? `<span class="badge">Account limit: ${fmtNum(limit)} / day</span>` : ''}</div>
   <div class="banner cold" style="margin-bottom:16px">❄ ${esc(m.quota_note)}</div>
+  <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>${t('name')}</th><th>Mobile</th><th>${t('email')}</th><th>${t('role')}</th><th>Daily limit (used today)</th><th></th></tr></thead><tbody>${m.members.map((x) => `<tr>
+    <td><b>${esc(x.name)}</b></td><td class="small mono">${esc(x.phone || '—')}</td><td class="small">${esc(x.email)}</td><td><span class="badge">${esc(human(x.role))}</span></td>
+    <td>${capCell(x)}</td>
+    <td>${manage && x.role !== 'ORG_OWNER' ? `<button class="btn sm ghost" data-act="remove-member" data-id="${x.user_id}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
   <div class="grid g2" style="align-items:start">
-    <div class="table-wrap"><table><thead><tr><th>${t('name')}</th><th>${t('email')}</th><th>${t('role')}</th><th></th></tr></thead><tbody>${m.members.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td class="small">${esc(x.email)}</td><td><span class="badge">${esc(human(x.role))}</span></td><td>${can('members.manage') && x.role !== 'ORG_OWNER' ? `<button class="btn sm ghost" data-act="remove-member" data-id="${x.user_id}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-    <div class="grid">
-      ${can('members.manage') ? `<form class="card grid" data-form="invite" style="gap:10px"><h3>${t('invite')}</h3><p class="small muted">Invitees sign in with Google using this email and join this account — they never get a separate quota.</p>
+    ${manage ? `<form class="card grid" data-form="invite" style="gap:10px"><h3>${t('invite')}</h3><p class="small muted">The person signs in with Google using this email and joins this account. Leave the daily limit empty to let them use the shared allowance.</p>
+      <div class="grid g2">
+        <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120"></label>
+        <label class="field">Mobile number<input type="tel" name="phone" inputmode="tel" placeholder="+971 50 123 4567"></label>
         <label class="field">${t('email')}<input type="email" name="email" required></label>
         <label class="field">${t('role')}<select name="role">${['AGENT', 'TEAM_LEADER', 'SALES_MANAGER', 'MARKETING_MANAGER', 'ORG_ADMIN', 'AGENCY_DIRECTOR', 'AUDITOR'].map((r) => `<option value="${r}">${esc(human(r))}</option>`).join('')}</select></label>
-        <button class="btn primary">${t('invite')}</button></form>` : ''}
-      <div class="card"><h3>Pending invitations (${m.invitations.length})</h3>${m.invitations.slice(0, 20).map((i) => `<div class="small" style="padding:4px 0;border-top:1px solid var(--line)">${esc(i.email)} · ${esc(human(i.role))} · expires ${fmtDate(i.expires_at)}</div>`).join('') || '<span class="muted">—</span>'}${m.invitations.length > 20 ? `<div class="small muted">+${m.invitations.length - 20} more</div>` : ''}</div>
-    </div>
+        <label class="field">Daily limit (records)<input type="number" name="daily_cap" min="0" ${limit ? `max="${limit}"` : ''} placeholder="No personal limit"></label>
+      </div>
+      <button class="btn primary" style="justify-self:start">${t('invite')}</button></form>` : ''}
+    <div class="card"><h3>Pending invitations (${m.invitations.length})</h3>${m.invitations.slice(0, 20).map((i) => `<div class="small" style="padding:6px 0;border-top:1px solid var(--line)"><b>${esc(i.full_name || i.email)}</b>${i.full_name ? ` · ${esc(i.email)}` : ''}${i.phone ? ` · <span class="mono">${esc(i.phone)}</span>` : ''}<br>${esc(human(i.role))}${i.daily_cap != null ? ` · ${fmtNum(i.daily_cap)}/day` : ''} · expires ${fmtDate(i.expires_at)}</div>`).join('') || '<span class="muted">—</span>'}${m.invitations.length > 20 ? `<div class="small muted">+${m.invitations.length - 20} more</div>` : ''}</div>
   </div>`;
 }
 
@@ -668,7 +768,16 @@ async function viewBilling(_p, query) {
   const e = state.me.entitlements.cold;
   const manage = can('billing.manage');
   const pre = query.plan;
+  const act = b.activation;
+  const waiting = b.cash_requests.filter((c) => c.status === 'PENDING_PAYMENT');
   return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('billing')}</h1></div></div>
+  ${act ? `<form class="card grid" data-form="activate-code" style="border:2px solid var(--ok);margin-bottom:16px;gap:12px">
+      <h3 style="margin:0">✓ Payment confirmed — activate ${esc(act.plan_name)}</h3>
+      <p class="small muted" style="margin:0">Your activation code was sent automatically. It works once, only for your account, until ${fmtDT(act.expires_at)}.</p>
+      <div class="row" style="gap:10px;flex-wrap:wrap"><input type="text" name="code" value="${esc(act.code)}" aria-label="Activation code" class="mono" style="font-size:22px;letter-spacing:3px;max-width:220px;text-transform:uppercase"><button class="btn gold">Activate now</button></div>
+    </form>` : ''}
+  ${!act && waiting.length ? `<div class="banner cold" style="margin-bottom:16px">⏳ Waiting for AI-DATA to confirm your payment (ref <b class="mono">${esc(waiting[0].reference)}</b>). As soon as it is confirmed you will get an activation code here automatically.</div>` : ''}
+  ${!act && !e.active ? `<form class="card row" data-form="activate-code" style="gap:10px;margin-bottom:16px;flex-wrap:wrap"><span class="small"><b>Have an activation code?</b></span><input type="text" name="code" placeholder="XXXX-XXXX" required aria-label="Activation code" class="mono" style="max-width:180px;text-transform:uppercase"><button class="btn">Activate</button></form>` : ''}
   <div class="grid g2" style="align-items:start">
     <div class="card"><h3>Current Cold subscription</h3>
       ${e.active ? `<div class="kv"><span class="k">${t('plan')}</span><span class="v">${esc(e.plan_name)}</span><span class="k">${t('status')}</span><span class="v"><span class="badge ok">Active</span></span><span class="k">${t('renews')}</span><span class="v">${fmtDate(e.period_end)}</span><span class="k">Method</span><span class="v">${esc(human(e.provider))}</span></div>`
@@ -680,7 +789,7 @@ async function viewBilling(_p, query) {
         <button class="btn gold" data-act="pay-cash" data-plan="${p.code}">${t('pay_cash')}</button></div></div>`).join('') : `<div class="card muted">Only the account owner or director can change the subscription.</div>`}</div>
   </div>
   ${b.cash_requests.length ? `<div class="card" style="margin-top:16px"><h3>Offline payment requests</h3><div class="table-wrap"><table><thead><tr><th>Reference</th><th>${t('plan')}</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>${t('date')}</th></tr></thead><tbody>${b.cash_requests.map((c) => `<tr><td class="mono"><b>${esc(c.reference)}</b></td><td>${esc(human(c.plan_code))}</td><td class="num">${fmtMoney(c.amount_cents)}</td><td><span class="badge ${c.status === 'VERIFIED' ? 'ok' : c.status === 'REJECTED' ? 'bad' : 'warn'}">${esc(human(c.status))}</span></td><td>${fmtDT(c.created_at)}</td></tr>`).join('')}</tbody></table></div>
-    <p class="small muted">Pay at the AI-DATA office or by bank transfer quoting the reference. Access is activated only after finance verifies receipt; AI-DATA finance then sends you a single-use activation link by WhatsApp or email.</p></div>` : ''}
+    <p class="small muted">Pay at the AI-DATA office or by bank transfer quoting the reference. Access starts after AI-DATA confirms the money has arrived; you then receive an activation code automatically on this page and in your notifications.</p></div>` : ''}
   <div class="card" style="margin-top:16px"><h3>${t('payments')}</h3><div class="table-wrap"><table><thead><tr><th>${t('date')}</th><th>Method</th><th>Product</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>Receipt</th></tr></thead><tbody>${b.payments.map((p) => `<tr><td>${fmtDate(p.paid_at)}</td><td>${esc(human(p.provider))}</td><td>${esc(human(p.kind))}</td><td class="num">${fmtMoney(p.amount_cents)}</td><td><span class="badge ${p.status === 'COMPLETED' ? 'ok' : 'bad'}">${esc(human(p.status))}</span></td><td class="mono">${esc(p.receipt_no || '—')}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">—</td></tr>'}</tbody></table></div></div>
 `;
 }
@@ -708,7 +817,7 @@ async function viewSettings() {
 // Owner console
 // ---------------------------------------------------------------------------------
 async function viewOwner([sub = 'dashboard']) {
-  if (sub === 'finance') return ownerFinance();
+  if (sub === 'finance' || sub === 'approvals') return ownerApprovals();
   if (!isOwner() && sub !== 'dashboard') return '<div class="banner bad">Platform owner only.</div>';
   if (sub === 'source') return ownerSource();
   if (sub === 'data') return ownerData();
@@ -724,7 +833,7 @@ async function viewOwner([sub = 'dashboard']) {
     <div class="card"><div class="stat hot"><span class="l">Hot revenue this month (separate)</span><span class="v">${fmtMoney(d.hot_revenue_this_month.cents)}</span></div><p class="small muted">${d.hot_revenue_this_month.leads} leads billed</p></div>
   </div>
   <div class="grid g3" style="margin-top:16px">
-    <div class="card"><div class="stat"><span class="l">Pending cash</span><span class="v">${d.pending_cash.length}</span></div><a href="#/owner/finance" class="small">${t('finance')} →</a></div>
+    <div class="card"><div class="stat"><span class="l">Payments to confirm</span><span class="v" style="${d.pending_cash.length ? 'color:var(--bad)' : ''}">${d.pending_cash.length}</span></div><a href="#/owner/approvals" class="small">Payment approvals →</a></div>
     <div class="card"><div class="stat"><span class="l">Overdue / suspended</span><span class="v" style="color:var(--bad)">${d.overdue.length}</span></div></div>
     <div class="card"><div class="stat"><span class="l">Investor records</span><span class="v">${fmtNum(d.data.investors)}</span></div><p class="small muted">${fmtNum(d.data.transactions)} transactions · ${fmtNum(d.data.approved)} approved · ${fmtNum(d.data.pending)} pending review · ${fmtNum(d.data.suppressed)} suppressed</p></div>
   </div>
@@ -732,29 +841,44 @@ async function viewOwner([sub = 'dashboard']) {
   <div class="card" style="margin-top:16px"><h3>Cold usage by day</h3><div class="table-wrap"><table><tbody>${d.cold_usage_today.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.local_day)}</td><td class="num">${u.committed_used} / ${u.plan_limit}</td></tr>`).join('') || '<tr><td class="empty">—</td></tr>'}</tbody></table></div></div>`;
 }
 
-async function ownerFinance() {
-  const d = await GET('/api/owner/dashboard');
-  return `<div class="page-head"><div><div class="kicker">${t('owner_console')}</div><h1>${t('finance')}</h1></div></div>
-  <div class="banner warn" style="margin-bottom:16px">Verify only money actually received. A customer's screenshot is a claim, not a receipt. Approvals require MFA and are audited.</div>
-  <div class="card"><h3>Pending cash / offline payments</h3>${d.pending_cash.map((c) => `<form class="grid" data-form="verify-cash" data-id="${c.id}" style="border-top:1px solid var(--line);padding:12px 0;gap:10px">
-      <div class="row"><b class="mono">${esc(c.reference)}</b><span>${esc(c.org_name)}</span><span class="badge">${esc(human(c.plan_code))}</span><span class="badge gold">${fmtMoney(c.amount_cents)}</span><span class="small muted">${esc(c.requested_by_email)} · ${fmtDT(c.created_at)}</span></div>
-      ${c.customer_note ? `<div class="small muted">“${esc(c.customer_note)}”</div>` : ''}
-      <div class="grid g4" style="gap:8px"><label class="field">Amount received (AED)<input type="number" name="amount_aed" step="0.01" min="0" required></label><label class="field">Paid on<input type="date" name="paid_on" required></label>
-        <label class="field">Channel<select name="channel"><option value="CASH_OFFICE">Cash at office</option><option value="BANK_TRANSFER">Bank transfer</option><option value="CHEQUE">Cheque</option></select></label><label class="field">Receipt no.<input type="text" name="receipt_no" required maxlength="60"></label></div>
-      <div class="row"><button class="btn gold">Verify receipt & create activation link</button><button type="button" class="btn ghost" data-act="reject-cash" data-id="${c.id}">Reject</button></div></form>`).join('') || '<div class="empty">No pending offline payments.</div>'}</div>
-  <div class="card" style="margin-top:16px"><h3>Awaiting activation</h3>${d.awaiting_activation.map((s) => `<div class="row" style="border-top:1px solid var(--line);padding:8px 0"><span>${esc(s.org_name)} · ${esc(human(s.plan_code))} · ${fmtDT(s.created_at)}</span><div class="spacer"></div><button class="btn sm" data-act="reissue" data-id="${s.id}">Reissue link</button></div>`).join('') || '<div class="muted">—</div>'}</div>`;
+async function ownerApprovals() {
+  const d = await GET('/api/owner/approvals');
+  const step = (n, title, text) => `<div class="card" style="padding:14px 16px"><div class="row" style="gap:10px;align-items:flex-start"><span class="badge gold">${n}</span><div><b>${title}</b><div class="small muted">${text}</div></div></div></div>`;
+  const who = (c) => `${esc(c.requested_by_name || c.requested_by_email)}<br><span class="small muted">${esc(c.requested_by_email)}${c.requested_by_phone ? ` · <span class="mono">${esc(c.requested_by_phone)}</span>` : ''}</span>`;
+  return `<div class="page-head"><div><div class="kicker">${t('owner_console')}</div><h1>Payment approvals</h1><p class="muted" style="margin:4px 0 0">Confirm payments you have received. The customer then gets an activation code automatically.</p></div>
+    <div class="spacer"></div><span class="badge ${d.counts.to_confirm ? 'bad' : 'ok'}">${d.counts.to_confirm} to confirm</span><span class="badge gold">${d.counts.awaiting_activation} waiting for customer</span></div>
+  <div class="grid g3" style="margin-bottom:16px">
+    ${step(1, 'Customer pays', 'They choose Cash / bank transfer on their Billing page and get a payment reference (AIH-…). It appears below.')}
+    ${step(2, 'You confirm the money arrived', 'Check your bank or cash receipt, enter amount, date, channel and receipt number, then press <b>Confirm payment</b>.')}
+    ${step(3, 'Customer activates', `They receive an 8-character activation code automatically: in the app (notification + Billing page)${d.email_configured ? ' and by email' : ''}. One click and their data access starts.`)}
+  </div>
+  ${d.email_configured ? '' : '<div class="banner cold" style="margin-bottom:16px">Email sending is not set up, so codes are delivered inside the app only (customers see them as soon as they sign in). You can also send a code by WhatsApp after confirming.</div>'}
+  <div class="card"><h3>1 · Payments to confirm (${d.pending_cash.length})</h3>
+    <p class="small muted" style="margin-top:0">Confirm only money actually received. A customer's screenshot is a claim, not a receipt. Every confirmation is recorded in the audit log.</p>
+    ${d.pending_cash.map((c) => `<form class="grid" data-form="verify-cash" data-id="${c.id}" style="border-top:1px solid var(--line);padding:14px 0;gap:10px">
+      <div class="row" style="gap:12px;flex-wrap:wrap"><b class="mono" style="font-size:16px">${esc(c.reference)}</b><span><b>${esc(c.org_name)}</b></span><span class="badge">${esc(human(c.plan_code))}</span><span class="badge gold">${fmtMoney(c.amount_cents)}</span><span class="small muted">requested ${fmtDT(c.created_at)}</span></div>
+      <div class="small">${who(c)}</div>
+      ${c.customer_note ? `<div class="small muted">Customer note: “${esc(c.customer_note)}”</div>` : ''}
+      <div class="grid g4" style="gap:8px"><label class="field">Amount received (AED)<input type="number" name="amount_aed" step="0.01" min="0" required value="${(c.amount_cents / 100).toFixed(0)}"></label><label class="field">Paid on<input type="date" name="paid_on" required value="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="field">Channel<select name="channel"><option value="BANK_TRANSFER">Bank transfer</option><option value="CASH_OFFICE">Cash at office</option><option value="CHEQUE">Cheque</option></select></label><label class="field">Receipt / transfer no.<input type="text" name="receipt_no" required maxlength="60"></label></div>
+      <div class="row"><button class="btn gold">✓ Confirm payment & send activation code</button><button type="button" class="btn ghost" data-act="reject-cash" data-id="${c.id}">Reject</button></div></form>`).join('') || '<div class="empty">Nothing to confirm right now.</div>'}</div>
+  <div class="card" style="margin-top:16px"><h3>2 · Confirmed, waiting for the customer to activate (${d.awaiting_activation.length})</h3>
+    <p class="small muted" style="margin-top:0">The customer already has their code. If it expired or they lost it, send a new one (the old code stops working).</p>
+    ${d.awaiting_activation.map((s) => `<div class="row" style="border-top:1px solid var(--line);padding:10px 0;gap:12px;flex-wrap:wrap"><span><b>${esc(s.org_name)}</b> · ${esc(human(s.plan_code))}<br><span class="small muted">${esc(s.customer_email || '')}${s.customer_phone ? ` · <span class="mono">${esc(s.customer_phone)}</span>` : ''} · confirmed ${fmtDT(s.created_at)} · ${s.code_expires_at ? `code valid until ${fmtDT(s.code_expires_at)}` : '<b style="color:var(--bad)">code expired</b>'}</span></span><div class="spacer"></div><button class="btn sm" data-act="reissue" data-id="${s.id}">Send new code</button></div>`).join('') || '<div class="empty">No one is waiting.</div>'}</div>`;
 }
 
-// No email service yet: finance sends the single-use link by WhatsApp or email.
+// After confirming: the code has already reached the customer in the app (and by email
+// when configured). WhatsApp is offered as an extra channel.
 function showActivationLink(r, reissued = false) {
-  const text = `Your AI-DATA payment is verified. Sign in with Google as ${r.delivered_to} and open this single-use link to activate your subscription: ${r.activation_link}`;
-  openModal(`<h2>${reissued ? 'New activation link' : 'Payment verified ✓'}</h2>
-    <p class="small muted">Send this single-use link to <b>${esc(r.delivered_to)}</b>. It only works for that Google account${reissued ? '; the previous link no longer works' : ''}.</p>
-    <div class="code" id="act-link">${esc(r.activation_link)}</div>
-    <div class="row"><button class="btn primary" data-act="copy-link" data-text="${esc(r.activation_link)}">Copy link</button>
-      <a class="btn" target="_blank" rel="noopener noreferrer" href="https://wa.me/?text=${encodeURIComponent(text)}">Send by WhatsApp</a>
-      <a class="btn" href="mailto:${esc(r.delivered_to)}?subject=${encodeURIComponent('Activate your AI-DATA subscription')}&body=${encodeURIComponent(text)}">Send by email</a>
-      <button class="btn ghost" data-act="close-refresh">${t('close')}</button></div>`);
+  const text = `Your AI-DATA payment is confirmed. Activation code: ${r.activation_code}. Sign in with Google as ${r.delivered_to}, open Billing and press Activate, or open this link: ${r.activation_link}`;
+  openModal(`<h2>${reissued ? 'New activation code sent' : 'Payment confirmed ✓'}</h2>
+    <p>Activation code for <b>${esc(r.delivered_to)}</b>:</p>
+    <div class="code" style="font-size:28px;letter-spacing:4px;text-align:center" id="act-link">${esc(r.activation_code)}</div>
+    <div class="banner ok">Delivered automatically: in-app notification and on the customer's Billing page${r.emailed ? ', and by email' : ''}.${r.email_configured ? '' : ' (Email is not set up yet.)'}${reissued ? ' The previous code no longer works.' : ''}</div>
+    <p class="small muted">The code works once, only for that Google account, until ${fmtDT(r.expires_at)}.</p>
+    <div class="row"><a class="btn" target="_blank" rel="noopener noreferrer" href="https://wa.me/?text=${encodeURIComponent(text)}">Also send by WhatsApp</a>
+      <button class="btn" data-act="copy-link" data-text="${esc(text)}">Copy message</button>
+      <button class="btn primary" data-act="close-refresh">${t('close')}</button></div>`);
 }
 
 async function ownerData() {
@@ -876,6 +1000,9 @@ const actions = {
     } catch (e) { toast(errMsg(e), true); }
   },
   'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); render(); },
+  'signup-edit': () => { setSignupProfile(null); state.signinReturning = false; render(); },
+  'signup-returning': () => { state.signinReturning = true; render(); },
+  'signup-new': () => { state.signinReturning = false; render(); },
   'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
   logout: async () => { await POST('/api/auth/logout'); state.cfg = null; state.ih = { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null }; go('#/'); },
   notifs: async () => {
@@ -891,7 +1018,7 @@ const actions = {
   },
   'notifs-read': async () => { await POST('/api/me/notifications/read'); render(); },
   activate: async (el) => {
-    try { await POST('/api/billing/activate', { token: el.dataset.token }); toast('Subscription activated ✓'); go('#/overview'); } catch (e) { toast(errMsg(e), true); }
+    try { await POST('/api/billing/activate', { token: el.dataset.token }); toast('Subscription activated ✓'); go('#/overview'); } catch (e) { toast(ACTIVATION_ERRORS[e.data?.error] || errMsg(e), true); }
   },
   'ih-pick': (el) => { const id = Number(el.dataset.id); el.checked ? state.ih.selected.add(id) : state.ih.selected.delete(id); el.closest('tr').classList.toggle('sel', el.checked); updateBasket(); },
   'ih-page': (el) => { for (const r of state.ih.results) if (!r.acquired && !r.blocked_reason) el.checked ? state.ih.selected.add(r.id) : state.ih.selected.delete(r.id); render(); },
@@ -912,7 +1039,7 @@ const actions = {
   'reject-cash': async (el) => { if (confirm('Reject this payment request?')) { await POST(`/api/owner/cash/${el.dataset.id}/reject`); render(); } },
   reissue: async (el) => { try { showActivationLink(await withMfa(() => POST(`/api/owner/subscriptions/${el.dataset.id}/reissue-link`)), true); } catch (e) { toast(errMsg(e), true); } },
   'copy-link': async (el) => {
-    try { await navigator.clipboard.writeText(el.dataset.text); toast('Link copied ✓'); } catch { window.getSelection().selectAllChildren(document.getElementById('act-link')); toast('Press Ctrl+C to copy'); }
+    try { await navigator.clipboard.writeText(el.dataset.text); toast('Copied ✓'); } catch { window.getSelection().selectAllChildren(document.getElementById('act-link')); toast('Press Ctrl+C to copy'); }
   },
   'owner-more': async () => { const o = state.owner; const r = await POST('/api/owner/cold/search', { filter: o.filter, cursor: o.cursor, limit: 50 }); o.results.push(...r.results); o.cursor = r.next_cursor; render(); },
   'owner-export': async () => {
@@ -970,6 +1097,21 @@ function updateBasket() {
 }
 
 const forms = {
+  'signup-profile': async (f) => {
+    const p = await POST('/api/auth/check-profile', { full_name: f.full_name.value, phone: f.phone.value, email: f.email.value });
+    setSignupProfile(p);
+    render();
+  },
+  profile: async (f) => {
+    await POST('/api/me/profile', { full_name: f.full_name.value, phone: f.phone.value });
+    await loadMe();
+    toast('Profile saved ✓');
+    go('#/');
+  },
+  'member-cap': async (f) => {
+    await api('PATCH', `/api/org/members/${f.dataset.id}`, { daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
+    toast('Daily limit saved ✓'); render();
+  },
   'create-org': async (f) => {
     await POST('/api/organizations', { name: f.name.value, kind: f.plan.value === 'AGENCY_MONTHLY' ? 'AGENCY' : 'AGENT', business_contact: f.business_contact.value, license_no: f.license_no.value, language: f.language.value, timezone: f.timezone.value, terms: f.terms.checked });
     go(`#/billing?plan=${f.plan.value}`);
@@ -979,7 +1121,18 @@ const forms = {
   'crm-filter': (f) => { const q = new URLSearchParams(Object.fromEntries([...new FormData(f)].filter(([, v]) => v))).toString(); go('#/crm' + (q ? '?' + q : '')); },
   'lead-activity': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/activities`, { type: f.type.value, body: f.body.value }); toast('✓'); render(); },
   'lead-task': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/tasks`, { title: f.title.value, due_at: new Date(f.due_at.value).toISOString() }); toast('✓'); render(); },
-  invite: async (f) => { await POST('/api/org/invitations', { email: f.email.value, role: f.role.value }); toast('Invitation recorded ✓'); render(); },
+  invite: async (f) => {
+    await POST('/api/org/invitations', { full_name: f.full_name.value, phone: f.phone.value || undefined, email: f.email.value, role: f.role.value, daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
+    toast('Invitation recorded ✓'); render();
+  },
+  'activate-code': async (f) => {
+    try {
+      await POST('/api/billing/activate', { code: f.code.value });
+      await loadMe();
+      toast('Subscription activated ✓ Your data access is live.');
+      go('#/overview');
+    } catch (e) { toast(ACTIVATION_ERRORS[e.data?.error] || errMsg(e), true); }
+  },
   'verify-cash': async (f) => {
     const r = await withMfa(() => POST(`/api/owner/cash/${f.dataset.id}/verify`, { amount_aed: Number(f.amount_aed.value), paid_on: f.paid_on.value, channel: f.channel.value, receipt_no: f.receipt_no.value }));
     showActivationLink(r);

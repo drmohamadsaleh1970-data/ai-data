@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { getDb, tx } from './db.js';
-import { HttpError, iso, now, audit, notify } from './util.js';
+import { HttpError, iso, now, audit, notify, dubaiDay, cleanEmail, cleanName, requireMobile } from './util.js';
+import { activeSubscription } from './entitlements.js';
 import { hasPerm } from './auth.js';
 
 export const STAGES = ['NEW', 'ASSIGNED', 'CONTACT_ATTEMPTED', 'CONTACTED', 'QUALIFIED', 'INTERESTED', 'VIEWING_SCHEDULED', 'VIEWED',
@@ -183,21 +184,45 @@ export function runSlaSweep() {
 export function members(orgId) {
   const db = getDb();
   return {
-    members: db.prepare("SELECT m.user_id, u.name, u.email, m.role, m.created_at FROM membership m JOIN platform_user u ON u.id = m.user_id WHERE m.org_id = ? AND m.status='ACTIVE' ORDER BY m.id").all(orgId),
-    invitations: db.prepare('SELECT id, email, role, expires_at, accepted_at, created_at FROM invitation WHERE org_id = ? AND accepted_at IS NULL ORDER BY id DESC').all(orgId),
+    members: db.prepare(`SELECT m.user_id, u.name, u.email, u.phone, m.role, m.daily_cap, m.created_at,
+        (SELECT COALESCE(SUM(l.delta),0) FROM quota_ledger l WHERE l.org_id = m.org_id AND l.user_id = m.user_id AND l.local_day = ?) AS used_today
+      FROM membership m JOIN platform_user u ON u.id = m.user_id WHERE m.org_id = ? AND m.status='ACTIVE' ORDER BY m.id`).all(dubaiDay(), orgId),
+    invitations: db.prepare('SELECT id, email, full_name, phone, role, daily_cap, expires_at, accepted_at, created_at FROM invitation WHERE org_id = ? AND accepted_at IS NULL ORDER BY id DESC').all(orgId),
     seats: 'UNLIMITED',
-    quota_note: 'All members share one daily Cold allowance. Adding members never changes the quota.',
+    account_limit: activeSubscription(orgId)?.cold_daily_limit ?? null,
+    quota_note: 'All members share the account\'s daily Cold allowance. The director can also give each member a personal daily cap inside it.',
   };
 }
 
-export function invite(req, { email, role }) {
+function parseCap(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 100_000) throw new HttpError(400, 'INVALID_CAP', 'Daily limit must be a whole number (or empty for no personal limit).');
+  return n;
+}
+
+export function invite(req, { email, role, full_name, phone, daily_cap }) {
   const { ORG_ROLES } = req.app.locals;
-  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new HttpError(400, 'INVALID_EMAIL');
+  const mail = cleanEmail(email);
   if (!ORG_ROLES.includes(role) || role === 'ORG_OWNER') throw new HttpError(400, 'INVALID_ROLE');
-  const id = Number(getDb().prepare('INSERT INTO invitation (org_id, email, role, invited_by, expires_at, created_at) VALUES (?,?,?,?,?,?)')
-    .run(req.membership.org_id, email.toLowerCase(), role, req.user.id, new Date(now().getTime() + 14 * 86_400_000).toISOString(), iso()).lastInsertRowid);
-  audit({ actor: req.user.id, org: req.membership.org_id, action: 'MEMBER_INVITED', target: email.toLowerCase(), meta: { role } });
+  const name = full_name ? cleanName(full_name) : null;
+  const mobile = phone ? requireMobile(phone) : null;
+  const cap = parseCap(daily_cap);
+  const id = Number(getDb().prepare('INSERT INTO invitation (org_id, email, full_name, phone, role, daily_cap, invited_by, expires_at, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(req.membership.org_id, mail, name, mobile, role, cap, req.user.id, new Date(now().getTime() + 14 * 86_400_000).toISOString(), iso()).lastInsertRowid);
+  audit({ actor: req.user.id, org: req.membership.org_id, action: 'MEMBER_INVITED', target: mail, meta: { role, daily_cap: cap } });
   return { id };
+}
+
+export function setMemberCap(req, userId, value) {
+  const db = getDb();
+  const orgId = req.membership.org_id;
+  const m = db.prepare("SELECT m.role FROM membership m WHERE m.org_id = ? AND m.user_id = ? AND m.status='ACTIVE'").get(orgId, Number(userId));
+  if (!m) throw new HttpError(404, 'NOT_A_MEMBER');
+  const cap = parseCap(value);
+  db.prepare('UPDATE membership SET daily_cap = ? WHERE org_id = ? AND user_id = ?').run(cap, orgId, Number(userId));
+  audit({ actor: req.user.id, org: orgId, action: 'MEMBER_CAP_SET', target: `user:${userId}`, meta: { daily_cap: cap } });
+  return { user_id: Number(userId), daily_cap: cap };
 }
 
 // Invitations bind to the verified Google email of the signed-in user.
@@ -205,8 +230,12 @@ export function acceptInvitations(user) {
   const db = getDb();
   const pending = db.prepare('SELECT * FROM invitation WHERE email = ? AND accepted_at IS NULL AND expires_at > ?').all(user.email.toLowerCase(), iso());
   for (const inv of pending) {
-    db.prepare("INSERT INTO membership (org_id, user_id, role, status, created_at) VALUES (?,?,?,'ACTIVE',?) ON CONFLICT(org_id, user_id) DO UPDATE SET status='ACTIVE', role=excluded.role")
-      .run(inv.org_id, user.id, inv.role, iso());
+    db.prepare("INSERT INTO membership (org_id, user_id, role, status, daily_cap, created_at) VALUES (?,?,?,'ACTIVE',?,?) ON CONFLICT(org_id, user_id) DO UPDATE SET status='ACTIVE', role=excluded.role, daily_cap=excluded.daily_cap")
+      .run(inv.org_id, user.id, inv.role, inv.daily_cap ?? null, iso());
+    // Details the director entered fill in a profile the person has not completed yet.
+    if (inv.phone && !user.phone) {
+      db.prepare('UPDATE platform_user SET phone = ?, name = COALESCE(?, name) WHERE id = ? AND phone IS NULL').run(inv.phone, inv.full_name, user.id);
+    }
     db.prepare('UPDATE invitation SET accepted_at = ?, accepted_by = ? WHERE id = ?').run(iso(), user.id, inv.id);
     audit({ actor: user.id, org: inv.org_id, action: 'INVITATION_ACCEPTED', target: `invitation:${inv.id}` });
   }

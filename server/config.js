@@ -27,7 +27,10 @@ export const config = {
   // Owner/finance actions ask for an authenticator code unless OWNER_MFA_REQUIRED=false.
   // Switching it off means a signed-in owner session alone can import, export and verify payments.
   get ownerMfaRequired() { return env.OWNER_MFA_REQUIRED !== 'false'; },
-  get ownerEmail() { return (env.OWNER_EMAIL || '').trim().toLowerCase(); },
+  // OWNER_EMAIL may list several Google addresses (comma separated). All of them are
+  // platform owners; the first is the main owner.
+  get ownerEmails() { return [...new Set((env.OWNER_EMAIL || '').split(/[,;\s]+/).map((e) => e.trim().toLowerCase()).filter(Boolean))]; },
+  get ownerEmail() { return this.ownerEmails[0] || ''; },
   get ownerTotpSecret() { return (env.OWNER_TOTP_SECRET || '').replace(/\s+/g, '').toUpperCase(); },
   // ai-home.world is the investor-data source only. Read lazily so tests and ops can
   // change it without a restart of the config module.
