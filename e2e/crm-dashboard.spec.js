@@ -53,7 +53,7 @@ test('agency director: dashboard, preferences on a lead, team drill-down', async
   await page.getByLabel('Period').selectOption('7');
   await expect(page).toHaveURL(/days=7/);
   await expect(page.locator('.page-head p')).toContainText('last 7 days');
-  await page.getByRole('row').filter({ hasText: 'Aisha Agent' }).click();
+  await page.locator('tr.click', { hasText: 'Aisha Agent (TEST)' }).click();
   await expect(page.locator('.page-head p')).toContainText('Agent: Aisha Agent (TEST)');
   await page.getByLabel('Show').selectOption('');
   await expect(page.locator('.page-head p')).toContainText('Whole agency');
