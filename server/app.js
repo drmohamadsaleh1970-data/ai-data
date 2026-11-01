@@ -230,7 +230,7 @@ export function createApp(options = {}) {
 
   // --- Cold data -------------------------------------------------------------------------
   r.get('/cold/filters', requireOrgPermission('cold.search'), ok(() => cold.filterOptions()));
-  r.post('/cold/search', requireOrgPermission('cold.search'), ok((req) => cold.search({ orgId: orgId(req), filter: req.body.filter, cursor: req.body.cursor, limit: req.body.limit })));
+  r.post('/cold/search', requireOrgPermission('cold.search'), ok((req) => cold.search({ orgId: orgId(req), userId: req.user.id, filter: req.body.filter, cursor: req.body.cursor, limit: req.body.limit })));
   r.post('/cold/transfers/estimate', requireOrgPermission('cold.transfer'), ok((req) => cold.estimate({ orgId: orgId(req), userId: req.user.id, selection: req.body.selection })));
   r.post('/cold/transfers', requireOrgPermission('cold.transfer'), ok((req) => cold.transfer({
     membership: req.membership, selection: req.body.selection, idempotencyKey: req.get('idempotency-key'),

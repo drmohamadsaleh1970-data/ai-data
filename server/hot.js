@@ -1,6 +1,6 @@
 import { getDb, tx } from './db.js';
 import { HttpError, iso, now, audit, randomToken, flag } from './util.js';
-import { normalizePhone } from './crm.js';
+import { normalizePhone, findPerson, repeatOnLead } from './crm.js';
 import { alertNewLead, alertNewPoolLead, alertSearch } from './alerts.js';
 
 // Alerts must never stop a lead from being stored.
@@ -159,12 +159,21 @@ export function ingest({ orgId, sourceCode, eventKey, fullName, email, phone, la
 function createHotLead(conn, { orgId, fullName, email, phone, language, interest, consent, detail, campaignId = null, utm = null }) {
   const ts = iso();
   const org = conn.prepare('SELECT * FROM organization WHERE id = ?').get(orgId);
+  // Duplicate prevention: this person already has an open lead here → no second lead and no
+  // second agent; the new inquiry is logged on their lead and their agent is alerted.
+  const known = findPerson(conn, orgId, { email, phone });
+  if (known?.lead_id) {
+    const what = [interest?.area, interest?.property_type, interest?.bedrooms && `${interest.bedrooms} BR`, interest?.budget_max_aed && `≤ AED ${interest.budget_max_aed}`, interest?.message].filter(Boolean).join(' · ');
+    conn.prepare("UPDATE crm_lead SET priority = 'HIGH' WHERE id = ?").run(known.lead_id);
+    return repeatOnLead(conn, { orgId, leadId: known.lead_id, type: 'REPEAT_INQUIRY', body: `Same person enquired again (${detail})${what ? `: ${what}` : ''}`,
+      notifyType: 'HOT_LEAD', notifyBody: `${fullName} enquired again — already your lead, respond within ${org.first_contact_sla_minutes_hot} min` });
+  }
   // Round-robin across agents; falls back to the organization owner.
   const agents = conn.prepare("SELECT user_id FROM membership WHERE org_id = ? AND role='AGENT' AND status='ACTIVE' ORDER BY user_id").all(orgId);
   const n = conn.prepare("SELECT COUNT(*) AS n FROM crm_lead WHERE org_id = ? AND source_type='HOT'").get(orgId).n;
   const assignee = agents.length ? agents[Number(n) % agents.length].user_id : org.owner_user_id;
   const campaignName = campaignId ? conn.prepare('SELECT name FROM lead_campaign WHERE id = ?').get(campaignId)?.name ?? null : null;
-  const cid = Number(conn.prepare(`INSERT INTO crm_contact (org_id, full_name, email, phone, preferred_language, source_type, marketing_permission, created_at, updated_at)
+  const cid = known?.contact_id ?? Number(conn.prepare(`INSERT INTO crm_contact (org_id, full_name, email, phone, preferred_language, source_type, marketing_permission, created_at, updated_at)
     VALUES (?,?,?,?,?,'HOT',?,?,?)`).run(orgId, fullName, email, phone, language ?? null, consent.marketing ? 'GRANTED' : 'UNKNOWN', ts, ts).lastInsertRowid);
   const due = new Date(Date.parse(ts) + org.first_contact_sla_minutes_hot * 60_000).toISOString();
   const leadId = Number(conn.prepare(`INSERT INTO crm_lead (org_id, contact_id, source_type, source_detail, provenance_note, stage, assigned_user_id, priority, interest_json, consent_json, first_contact_due, created_at, updated_at, campaign_id, utm_json, campaign_tag)
@@ -195,6 +204,7 @@ function allocateIn(conn, { actorId, poolId, orgId, rule, method }) {
   if (lead.allocated_org_id) throw new HttpError(409, 'ALREADY_ALLOCATED');
   const src = conn.prepare('SELECT * FROM hot_lead_source WHERE code = ?').get(lead.source_code);
   if (src?.isolation_required) throw new HttpError(403, 'SOURCE_POLICY_FORBIDS_REALLOCATION');
+  if (findPerson(conn, Number(orgId), { email: lead.email, phone: lead.phone })) throw new HttpError(409, 'PERSON_ALREADY_IN_THIS_CRM', 'This person is already in that customer’s CRM — allocating would charge them twice for the same contact.');
   const ent = conn.prepare("SELECT * FROM hot_lead_entitlement WHERE org_id = ? AND status='ACTIVE' AND credits_used < credits_total ORDER BY id LIMIT 1").get(Number(orgId));
   if (!ent) throw new HttpError(402, 'NO_HOT_CREDITS');
   const consent = JSON.parse(lead.consent_json);
@@ -230,7 +240,9 @@ export function autoAllocate(poolId, actorId = null) {
   if (!p.configured) return null;
   try {
     const r = tx((conn) => {
-      const next = distributionQueue(conn)[0];
+      // Next customer in turn who does not already have this person.
+      const pl = conn.prepare('SELECT email, phone FROM hot_lead_pool WHERE id = ?').get(Number(poolId));
+      const next = distributionQueue(conn).find((q) => !pl || !findPerson(conn, q.org_id, { email: pl.email, phone: pl.phone }));
       if (!next) return null;
       return allocateIn(conn, { actorId, poolId, orgId: next.org_id, rule: p.rule, method: 'AUTO' });
     });
@@ -263,7 +275,8 @@ export function orgHotView(orgId) {
     pricing: pricing(),
     entitlements: db.prepare('SELECT id, credits_total, credits_used, status, created_at FROM hot_lead_entitlement WHERE org_id = ? ORDER BY id DESC').all(orgId),
     ledger: db.prepare('SELECT id, crm_lead_id, amount_cents, currency, created_at FROM hot_lead_billing_ledger WHERE org_id = ? ORDER BY id DESC LIMIT 100').all(orgId),
-    recent: db.prepare(`SELECT l.id, c.full_name, l.source_detail, l.stage, l.created_at, l.first_contact_due, l.first_contacted_at FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id
+    recent: db.prepare(`SELECT l.id, c.full_name, l.source_detail, l.stage, l.created_at, l.first_contact_due, l.first_contacted_at, l.assigned_user_id, u.name AS assignee_name
+      FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id LEFT JOIN platform_user u ON u.id = l.assigned_user_id
       WHERE l.org_id = ? AND l.source_type = 'HOT' ORDER BY l.id DESC LIMIT 50`).all(orgId),
     site_keys: db.prepare('SELECT key, label FROM site_key WHERE org_id = ?').all(orgId),
     sources: sources(),
