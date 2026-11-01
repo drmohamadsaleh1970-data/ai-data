@@ -76,6 +76,12 @@ export function seedFixtures({ investors = 600 } = {}) {
   const solo = user('solo', 'solo@example.com', 'Sam Solo (TEST)');
   const pending = user('pending', 'pending@palmgate.example', 'Paula Pending (TEST)');
   user('newuser', 'new.user@gmail.example', 'New Visitor (TEST)');
+  // Brand-new people for the full sign-up journey (e2e/journey.spec.js): no mobile, no
+  // profile, no organization yet.
+  const blank = (sub, email, name) => db.prepare('INSERT INTO platform_user (google_sub, email, name, created_at) VALUES (?,?,?,?)').run(`fixture|${sub}`, email, name, ts);
+  blank('fresh-agency', 'fresh.agency@journey.example', 'Fresh Agency Google Name');
+  blank('fresh-solo', 'fresh.solo@journey.example', 'Fresh Solo Google Name');
+  blank('fresh-agent', 'fresh.agent@journey.example', 'Fresh Agent Google Name');
 
   const org = (name, kind, ownerId) => {
     const id = Number(db.prepare('INSERT INTO organization (name, kind, owner_user_id, business_contact, license_no, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?,?)')

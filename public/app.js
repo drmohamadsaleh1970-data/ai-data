@@ -471,7 +471,7 @@ async function viewOverview() {
 const srcBadge = (s) => (s === 'COLD' ? '<span class="badge cold">❄ COLD</span>' : s === 'HOT' ? '<span class="badge hot">🔥 HOT</span>' : `<span class="badge">${esc(s)}</span>`);
 const REASON_LABEL = {
   RIGHTS_PENDING_REVIEW: 'Rights pending review', SUPPRESSED_DO_NOT_CONTACT: 'Do-not-contact', TRANSFER_DISABLED_PENDING_LEGAL_APPROVAL: 'Transfers disabled pending legal approval',
-  DAILY_QUOTA_EXHAUSTED: 'Daily allowance used up', NOT_FOUND: 'Record not found', NO_CHARGE_ALREADY_IN_CRM: 'Already in CRM — not charged',
+  DAILY_QUOTA_EXHAUSTED: 'Daily allowance used up', USER_DAILY_CAP_REACHED: 'Personal daily limit reached', NOT_FOUND: 'Record not found', NO_CHARGE_ALREADY_IN_CRM: 'Already in CRM — not charged',
 };
 
 async function viewInvestorHistory() {
