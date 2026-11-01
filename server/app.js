@@ -64,7 +64,7 @@ export function createApp(options = {}) {
     // in an older tab must still work. Each nonce is used at most once (see /auth/google).
     const recent = String(readCookie(req, 'aih_nonce') || '').split('.').filter((n) => /^[\w-]{10,64}$/.test(n)).slice(-4);
     res.cookie('aih_nonce', [...recent, nonce].join('.'), { httpOnly: true, sameSite: 'lax', secure: config.secureCookies, maxAge: 10 * 60_000, path: '/' });
-    res.json({ google_client_id: config.googleClientId || null, nonce, demo_mode: config.demoMode, paypal_connected: paypalConfigured() });
+    res.json({ google_client_id: config.googleClientId || null, nonce, ...(config.demoMode ? { demo_mode: true } : {}), paypal_connected: paypalConfigured() });
   });
   r.post('/auth/google', ok(async (req, res) => {
     // Validate the typed details first, so a bad phone number never creates an account.
@@ -98,10 +98,13 @@ export function createApp(options = {}) {
     return { ok: true };
   }));
   // Fills the MFA code for demo personas only (they have no authenticator app).
-  r.get('/demo/totp', requireUser, ok((req) => {
-    if (!config.demoMode || !req.user.mfa_secret || !String(req.user.google_sub).startsWith('demo|')) throw new HttpError(404, 'NOT_FOUND');
-    return { code: totp(req.user.mfa_secret) };
-  }));
+  // Registered only in demo mode, so the real portal answers 404 (not 401) here.
+  if (config.demoMode) {
+    r.get('/demo/totp', requireUser, ok((req) => {
+      if (!req.user.mfa_secret || !String(req.user.google_sub).startsWith('demo|')) throw new HttpError(404, 'NOT_FOUND');
+      return { code: totp(req.user.mfa_secret) };
+    }));
+  }
   if (options.testLogin) {
     r.post('/test/login', ok((req, res) => {
       const u = getDb().prepare('SELECT * FROM platform_user WHERE google_sub = ?').get(`fixture|${req.body.persona}`);

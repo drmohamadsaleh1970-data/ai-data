@@ -108,9 +108,13 @@ test('quota resets at 00:00 Asia/Dubai, not server UTC midnight', async () => {
   const resetAt = new Date(q1.resets_at);
   // The reset instant is 20:00 UTC (= 00:00 Dubai, UTC+4).
   assert.equal(resetAt.getUTCHours(), 20);
+  // Sessions last 12 hours and Dubai midnight can be up to 24 hours away, so sign in
+  // again after moving the clock (otherwise this test fails on Dubai mornings).
   util.setClockOffset(resetAt.getTime() - Date.now() - 1000);
+  await c.login('solo');
   assert.equal((await c.get('/api/me/entitlements')).data.cold.quota.remaining, 0, 'one second before Dubai midnight');
   util.setClockOffset(resetAt.getTime() - Date.now() + 1000);
+  await c.login('solo');
   const q2 = (await c.get('/api/me/entitlements')).data.cold.quota;
   assert.equal(q2.remaining, 99);
   assert.notEqual(q2.local_day, q1.local_day);
