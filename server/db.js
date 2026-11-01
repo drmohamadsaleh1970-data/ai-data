@@ -352,6 +352,17 @@ CREATE TABLE IF NOT EXISTS crm_lead (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_crm_lead_org ON crm_lead(org_id, stage);
+-- WhatsApp / email message templates an organization writes for its agents.
+CREATE TABLE IF NOT EXISTS message_template (
+  id INTEGER PRIMARY KEY,
+  org_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  channel TEXT NOT NULL CHECK (channel IN ('WHATSAPP','EMAIL')),
+  language TEXT NOT NULL DEFAULT 'en',
+  body TEXT NOT NULL,
+  created_by INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS lead_activity (
   id INTEGER PRIMARY KEY,
   org_id INTEGER NOT NULL,
@@ -516,6 +527,9 @@ const ADDED_COLUMNS = [
   ['invitation', 'daily_cap', 'INTEGER'],
   ['activation_magic_link', 'code_hash', 'TEXT'],     // 8-character activation code (hash)
   ['activation_magic_link', 'code', 'TEXT'],          // shown to the bound customer until used
+  ['crm_lead', 'deal_value_aed', 'INTEGER'],          // expected deal value, for the pipeline forecast
+  ['crm_lead', 'expected_close', 'TEXT'],             // YYYY-MM-DD
+  ['crm_lead', 'tags', 'TEXT'],                       // comma separated, lower case
 ];
 
 function addColumns(conn, pg) {

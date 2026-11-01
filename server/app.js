@@ -218,6 +218,11 @@ export function createApp(options = {}) {
   r.post('/crm/leads/:id/activities', crmPerm, ok((req) => crm.addActivity(req, req.params.id, req.body || {})));
   r.post('/crm/leads/:id/tasks', crmPerm, ok((req) => crm.addTask(req, req.params.id, req.body || {})));
   r.get('/crm/tasks', crmPerm, ok((req) => crm.myTasks(req)));
+  r.post('/crm/leads/bulk', crmPerm, ok((req) => crm.bulkUpdate(req, req.body || {})));
+  r.post('/crm/tasks/:id/snooze', crmPerm, ok((req) => crm.snoozeTask(req, req.params.id, req.body || {})));
+  r.get('/crm/templates', crmPerm, ok((req) => crm.listTemplates(req)));
+  r.post('/crm/templates', requireOrgPermission('members.manage'), ok((req) => crm.createTemplate(req, req.body || {})));
+  r.delete('/crm/templates/:id', requireOrgPermission('members.manage'), ok((req) => crm.deleteTemplate(req, req.params.id)));
   r.post('/crm/tasks/:id/complete', crmPerm, ok((req) => crm.completeTask(req, req.params.id)));
   r.get('/crm/pipeline', crmPerm, ok((req) => ({ stages: crm.pipeline(req) })));
   r.post('/crm/import', requireOrgPermission('crm.import'), ok((req) => crm.importLeadsXlsx(req, { base64: req.body.file_base64, commit: req.body.commit === true, rightsConfirmed: req.body.rights_confirmed === true })));
@@ -256,6 +261,11 @@ export function createApp(options = {}) {
     // The path is server-generated (never user input), so serving from a dot-folder is safe.
     res.download(f.file, f.name, { dotfiles: 'allow' });
   });
+  r.get('/owner/orgs/:id', OWNER, ok((req) => owner.orgDetail(req.params.id)));
+  r.patch('/owner/orgs/:orgId/members/:userId', OWNER, ok((req) => owner.setUserCap({ actor: req.user, orgId: req.params.orgId, userId: req.params.userId, value: req.body?.daily_cap })));
+  r.post('/owner/orgs/:orgId/crm/delete', OWNER, requireRecentMfa, ok((req) => owner.deleteCrmData({ actor: req.user, orgId: req.params.orgId, userId: req.body?.user_id || null, confirm: req.body?.confirm })));
+  r.post('/owner/crm/delete-all', OWNER, requireRecentMfa, ok((req) => owner.deleteAllCrmData({ actor: req.user, confirm: req.body?.confirm })));
+  r.post('/owner/investors/delete-all', OWNER, requireRecentMfa, ok((req) => owner.deleteAllInvestorData({ actor: req.user, confirm: req.body?.confirm })));
   r.get('/owner/approvals', FINANCE, ok(() => ({ ...owner.approvals(), email_configured: emailConfigured() })));
   r.post('/owner/cash/:id/verify', FINANCE, requireRecentMfa, ok(async (req) => {
     const out = billing.verifyCash({
