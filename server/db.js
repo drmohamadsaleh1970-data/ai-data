@@ -549,6 +549,37 @@ CREATE TABLE IF NOT EXISTS meta_page (
   created_by INTEGER NOT NULL,
   created_at TEXT NOT NULL
 );
+-- "Tell me when a lead like this arrives": per-user match rules on new Hot leads (and, for
+-- the platform owner, on the Hot pool and anonymous ai-home.world searches).
+-- org_id NULL = platform-owner alert.
+CREATE TABLE IF NOT EXISTS lead_alert (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  org_id INTEGER,
+  name TEXT NOT NULL,
+  area TEXT,
+  property_type TEXT,
+  bedrooms INTEGER,
+  budget_min_aed INTEGER,
+  budget_max_aed INTEGER,
+  include_searches INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  last_search_alert_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_lead_alert_org ON lead_alert(org_id, active);
+-- Google Ads lead form webhooks: Google posts each lead with our key in google_key.
+CREATE TABLE IF NOT EXISTS google_ads_hook (
+  id INTEGER PRIMARY KEY,
+  label TEXT NOT NULL,
+  hook_key TEXT NOT NULL UNIQUE,
+  org_id INTEGER,
+  campaign_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  last_lead_at TEXT,
+  created_by INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
 `;
 
 let db;

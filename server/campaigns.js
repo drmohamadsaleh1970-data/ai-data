@@ -111,6 +111,7 @@ export function listCampaigns({ orgId = null } = {}) {
     return {
       id: cid, org_id: c.org_id, org_name: c.org_name, org_kind: c.org_kind, name: c.name, slug: c.slug, channel: c.channel, headline: c.headline, description: c.description,
       area: c.area, property_type: c.property_type, language: c.language, privacy_url: c.privacy_url, status: c.status, spend_aed: Number(c.spend_aed || 0), created_at: c.created_at,
+      site_key: c.site_key, // public anyway: it is in the campaign page and the search-capture code
       destination: fromPool ? 'AIHOME_HOT_POOL' : 'ORG_CRM',
       received, waiting_in_pool: fromPool ? p.filter((x) => !x.allocated_org_id).length : 0, in_crm: l.length,
       contacted: l.filter((x) => x.first_contacted_at).length, qualified: l.filter((x) => QUALIFIED.has(x.stage)).length, won: won.length,

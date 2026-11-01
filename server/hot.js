@@ -1,6 +1,10 @@
 import { getDb, tx } from './db.js';
 import { HttpError, iso, now, audit, randomToken, flag } from './util.js';
 import { normalizePhone } from './crm.js';
+import { alertNewLead, alertNewPoolLead, alertSearch } from './alerts.js';
+
+// Alerts must never stop a lead from being stored.
+const safely = (fn) => { try { fn(); } catch (err) { console.error('[alerts]', err); } };
 
 // Hot Leads: a separate commercial product with its own ledger. Nothing here reads or
 // writes Cold quota tables.
@@ -90,7 +94,11 @@ export function intakeInquiry(args) {
 // A new pool lead goes straight to the next customer with Hot credits when the owner has
 // turned automatic distribution on. The visitor's answer never names that customer.
 export function afterIngest(result) {
-  if (result?.destination === 'AIHOME_HOT_POOL' && flag(AUTO_FLAG)) autoAllocate(result.pool_id);
+  if (result?.destination === 'AGENCY_CRM') safely(() => alertNewLead(result.lead_id));
+  if (result?.destination === 'AIHOME_HOT_POOL') {
+    safely(() => alertNewPoolLead(result.pool_id));
+    if (flag(AUTO_FLAG)) autoAllocate(result.pool_id);
+  }
 }
 
 function intakeInquiryTx({ siteKey, body, ip, origin }) {
@@ -176,7 +184,9 @@ export function pool() {
 export function allocate({ actor, poolId, orgId }) {
   const p = pricing();
   if (!p.configured) throw new HttpError(409, 'OWNER_CONFIGURATION_REQUIRED');
-  return tx((conn) => allocateIn(conn, { actorId: actor.id, poolId, orgId, rule: p.rule, method: 'MANUAL' }));
+  const r = tx((conn) => allocateIn(conn, { actorId: actor.id, poolId, orgId, rule: p.rule, method: 'MANUAL' }));
+  safely(() => alertNewLead(r.crm_lead_id));
+  return r;
 }
 
 function allocateIn(conn, { actorId, poolId, orgId, rule, method }) {
@@ -219,11 +229,13 @@ export function autoAllocate(poolId, actorId = null) {
   const p = pricing();
   if (!p.configured) return null;
   try {
-    return tx((conn) => {
+    const r = tx((conn) => {
       const next = distributionQueue(conn)[0];
       if (!next) return null;
       return allocateIn(conn, { actorId, poolId, orgId: next.org_id, rule: p.rule, method: 'AUTO' });
     });
+    if (r) safely(() => alertNewLead(r.crm_lead_id));
+    return r;
   } catch (e) {
     if (e instanceof HttpError) return null; // stays in the pool for the owner
     throw e;
@@ -264,8 +276,14 @@ export function recordSearchEvent(body) {
   if (!allowed.includes(body.event_type)) throw new HttpError(400, 'INVALID_EVENT');
   if (body.consent_analytics !== true) return { stored: false, reason: 'NO_ANALYTICS_CONSENT' };
   const clean = (v) => (v == null ? null : String(v).replace(/[^\p{L}\p{N} \-]/gu, '').slice(0, 60));
+  const bedrooms = body.bedrooms === '' || body.bedrooms == null ? null : Number(body.bedrooms);
+  const budget = body.budget_max_aed === '' || body.budget_max_aed == null ? null : Number(body.budget_max_aed);
+  // Site names keep their dots (ai-home.world); other fields keep letters, digits, spaces, hyphens.
+  const site = body.site == null ? '' : String(body.site).replace(/[^\p{L}\p{N} .\-]/gu, '').slice(0, 60);
+  const ev = { site: site || 'ai-home.world', event_type: body.event_type, city: clean(body.city), area: clean(body.area), property_type: clean(body.property_type),
+    bedrooms: Number.isInteger(bedrooms) && bedrooms >= 0 && bedrooms <= 20 ? bedrooms : null, budget_max_aed: Number.isFinite(budget) && budget > 0 ? Math.round(budget) : null, purpose: clean(body.purpose) };
   getDb().prepare('INSERT INTO anonymous_search_event (site, event_type, city, area, property_type, bedrooms, budget_max_aed, purpose, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(clean(body.site) || 'ai-home.world', body.event_type, clean(body.city), clean(body.area), clean(body.property_type),
-      Number.isInteger(body.bedrooms) ? body.bedrooms : null, Number.isFinite(body.budget_max_aed) ? Math.round(body.budget_max_aed) : null, clean(body.purpose), iso());
+    .run(ev.site, ev.event_type, ev.city, ev.area, ev.property_type, ev.bedrooms, ev.budget_max_aed, ev.purpose, iso());
+  if (['search_performed', 'filters_changed', 'saved_search_created'].includes(ev.event_type)) safely(() => alertSearch(ev));
   return { stored: true, identified: false };
 }

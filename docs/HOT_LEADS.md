@@ -62,7 +62,21 @@ Facebook and Instagram instant forms can send leads straight to the portal, with
 
 Every webhook is checked against Meta's signature; repeated deliveries never create a second lead; if a lead cannot be read from Meta the portal asks Meta to retry and shows the error next to the Page. Meta instant forms must show your privacy policy; submitting the form is recorded as the request to be contacted, and marketing consent is never assumed.
 
-## 6. Other ad platforms: Google, TikTok, LinkedIn (and Meta via Zapier)
+## 6. Search capture: catch people while they search
+Put the code from **Lead generation → Search capture for your website** on the search pages of ai-home.world (or any property site), and call `aidataSearch({...})` after each search with the area, property type, bedrooms (0 = studio), max budget and purpose.
+
+- **Anonymous search signals:** if the visitor accepted analytics cookies (pass `{ analytics: true }`), each search is recorded without any name, number or cookie and appears within seconds under **Live leads → Searching now**, with the most searched combinations of the day.
+- **Instant Hot lead:** a small box offers *“Get matching homes on WhatsApp”*. If the visitor fills it in and ticks the consent box, they arrive on **Live leads** within seconds as a 🔥 Hot lead with their exact search attached (source `ai-home.world search`), routed like any lead of that campaign (Hot pool or one account).
+
+Nobody becomes a lead without filling in the box: searches stay anonymous.
+
+## 7. Lead alerts
+On **Live leads → My lead alerts**, anyone can save rules such as *studio · Dubai Marina · up to AED 1,200,000*. The moment a matching Hot lead arrives they get a notification (bell) and the lead is starred ⭐ on the board. Agents are alerted only about leads assigned to them; managers about their whole account; the platform owner about every account and the Hot pool, and can also be alerted (at most every 10 minutes per rule) when someone is **searching** that on ai-home.world.
+
+## 8. Google Ads lead forms, built in
+**Lead generation → Google Ads lead forms → Create connection** (owner: for the Hot pool or one account; agency managers: for their own account). In Google Ads → the lead form → **Lead delivery → Webhook**, paste the webhook URL and the connection's **key**, then press **Send test data**: the test lead appears marked *(Google test lead)* and is never distributed or billed. Real leads arrive within seconds, tagged `google` / `lead_form` with the Google campaign and ad ids, deduplicated by Google's lead id. Custom questions about area, property type, bedrooms and budget are recognised; other answers go into the message.
+
+## 9. Other ad platforms: TikTok, LinkedIn, Snapchat (and Meta or Google via Zapier)
 Use **Zapier** or **Make** to forward each new lead:
 
 1. **Trigger:** *New lead* in Facebook Lead Ads, Google Ads lead forms, TikTok Lead Generation or LinkedIn Lead Gen Forms.
@@ -91,7 +105,7 @@ Use **Zapier** or **Make** to forward each new lead:
 - Always map the platform's **lead ID** to `client_event_id`, so a retried delivery is never stored twice.
 - Booleans may be sent as text (`"true"`, `"yes"`).
 
-## 7. Any other system (API)
+## 10. Any other system (API)
 ```bash
 curl -X POST https://ai-data-phi.vercel.app/api/public/inquiry \
   -H 'Content-Type: application/json' -H 'X-Site-Key: sk_xxxxxxxxxxxxxxxx' \
@@ -108,7 +122,7 @@ curl -X POST https://ai-data-phi.vercel.app/api/public/inquiry \
 | `403 ORIGIN_NOT_ALLOWED` | The key is limited to another website |
 | `429 RATE_LIMITED` | More than 10 leads per minute from one IP address |
 
-## 8. Selling pool leads to agencies
+## 11. Selling pool leads to agencies
 1. **Owner console → Hot pricing & pool → Pricing:** choose the model and price, then click **Save & approve pricing** (MFA required). Until then, checkout and allocation stay disabled.
 2. After an agency pays for Hot Leads, use **Grant Hot credits** to give it credits.
 3. Send leads to customers, automatically or by hand:
