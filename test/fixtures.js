@@ -82,6 +82,8 @@ export function seedFixtures({ investors = 600 } = {}) {
   blank('fresh-agency', 'fresh.agency@journey.example', 'Fresh Agency Google Name');
   blank('fresh-solo', 'fresh.solo@journey.example', 'Fresh Solo Google Name');
   blank('fresh-agent', 'fresh.agent@journey.example', 'Fresh Agent Google Name');
+  blank('fresh-joiner', 'fresh.joiner@journey.example', 'Fresh Joiner Google Name');
+  blank('fresh-joiner2', 'fresh.joiner2@journey.example', 'Fresh Joiner Two');
 
   const org = (name, kind, ownerId) => {
     const id = Number(db.prepare('INSERT INTO organization (name, kind, owner_user_id, business_contact, license_no, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?,?)')

@@ -56,6 +56,11 @@ export function loadSession(req, _res, next) {
   if (!s || s.expires_at < iso()) return next();
   req.session = s;
   req.user = db.prepare('SELECT * FROM platform_user WHERE id = ?').get(s.user_id);
+  // Joined an organization after signing in (e.g. an agency approved them): open it.
+  if (!s.active_org_id) {
+    const first = db.prepare("SELECT org_id FROM membership WHERE user_id = ? AND status='ACTIVE' ORDER BY id LIMIT 1").get(s.user_id);
+    if (first) { db.prepare('UPDATE session SET active_org_id = ? WHERE id_hash = ?').run(first.org_id, s.id_hash); s.active_org_id = first.org_id; }
+  }
   if (s.active_org_id) {
     req.membership = db.prepare("SELECT * FROM membership WHERE org_id = ? AND user_id = ? AND status='ACTIVE'").get(s.active_org_id, s.user_id) || null;
   }

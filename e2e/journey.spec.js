@@ -198,3 +198,53 @@ test('solo agent: sign-up → payment → owner approval → activation with 99 
   expect(problems, problems.join('\n')).toEqual([]);
   await sCtx.close(); await oCtx.close();
 });
+
+test('agent in an agency: chooses the agency by name, asks to join, the director approves with a limit', async ({ browser }) => {
+  const aCtx = await browser.newContext(); const dCtx = await browser.newContext();
+  const agent = await aCtx.newPage(); const director = await dCtx.newPage();
+  const p1 = watch(agent, 'agent'), p2 = watch(director, 'director');
+
+  // Sign-in page: "Agent in an agency" asks for the agency, picked from the list.
+  await agent.goto('/#/signin');
+  await agent.getByRole('button', { name: /Work under your agency/ }).click();
+  await agent.getByLabel('Full name').fill('Sami Nasser');
+  await agent.getByLabel('Mobile number').fill('055 333 4444');
+  await agent.getByLabel('Email').fill('fresh.joiner@journey.example');
+  await agent.getByLabel('Your agency').fill('Nowhere Realty');
+  await agent.getByRole('button', { name: 'Continue' }).click();
+  await expect(agent.getByText(/No agency with that name/)).toBeVisible();
+  await agent.getByLabel('Your agency').fill('Marina Crest Realty (TEST)');
+  await agent.getByRole('button', { name: 'Continue' }).click();
+  await expect(agent.locator('.kv')).toContainText('Marina Crest Realty (TEST)');
+  await agent.screenshot({ path: `${shots}/join-1-signin.png`, fullPage: true });
+
+  // Google sign-in (test sign-in here), profile, then the join page.
+  await signIn(agent, 'fresh-joiner');
+  await completeProfile(agent, { name: 'Sami Nasser', phone: '055 333 4444' });
+  await expect(agent.getByRole('heading', { name: 'Join your agency' })).toBeVisible();
+  await agent.getByLabel('Your agency').fill('Marina Crest Realty (TEST)');
+  await agent.getByRole('button', { name: 'Ask to join' }).click();
+  await expect(agent.getByRole('heading', { name: 'Waiting for approval' })).toBeVisible();
+  await expect(agent.getByText(/You asked to join Marina Crest Realty \(TEST\)/)).toBeVisible();
+
+  // Director: banner → Team → approve as Agent with 3 a day.
+  await signIn(director, 'director');
+  await director.goto('/#/overview');
+  await director.getByRole('link', { name: /asked to join your agency/ }).click();
+  const req = director.locator('form[data-form=join-approve]').filter({ hasText: 'Sami Nasser' });
+  await expect(req).toContainText('+971553334444');
+  await req.getByLabel('Daily limit for Sami Nasser').fill('3');
+  await req.getByRole('button', { name: 'Approve' }).click();
+  await expect(director.getByText('Approved ✓')).toBeVisible();
+  await expect(director.getByLabel('Daily limit for Sami Nasser')).toHaveValue('3');
+
+  // Agent: Check again → the agency workspace with the personal limit.
+  await agent.getByRole('button', { name: 'Check again' }).click();
+  await expect(agent.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await expect(agent.getByText('Marina Crest Realty (TEST)').first()).toBeVisible();
+  await expect(agent.getByTitle('Your personal daily limit')).toContainText('you 0/3');
+
+  const problems = [...p1, ...p2];
+  expect(problems, problems.join('\n')).toEqual([]);
+  await aCtx.close(); await dCtx.close();
+});

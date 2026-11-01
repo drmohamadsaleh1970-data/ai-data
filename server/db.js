@@ -352,6 +352,17 @@ CREATE TABLE IF NOT EXISTS crm_lead (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_crm_lead_org ON crm_lead(org_id, stage);
+-- An agent asking to join an agency's account (approved or declined by the agency).
+CREATE TABLE IF NOT EXISTS join_request (
+  id INTEGER PRIMARY KEY,
+  org_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','APPROVED','DECLINED','CANCELLED')),
+  decided_by INTEGER,
+  decided_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_join_request_org ON join_request(org_id, status);
 -- WhatsApp / email message templates an organization writes for its agents.
 CREATE TABLE IF NOT EXISTS message_template (
   id INTEGER PRIMARY KEY,

@@ -162,6 +162,9 @@ function actionBanner(name, parts) {
   if (m.activation_pending && name !== 'billing') {
     return `<a class="banner ok action-banner" href="#/billing" style="display:flex;gap:10px;align-items:center;margin-bottom:16px;text-decoration:none"><b>✓ Payment confirmed.</b> Your activation code is ready — activate your data access now →</a>`;
   }
+  if (m.join_requests_waiting && name !== 'team') {
+    return `<a class="banner warn action-banner" href="#/team" style="display:flex;gap:10px;align-items:center;margin-bottom:16px;text-decoration:none"><b>${m.join_requests_waiting} agent${m.join_requests_waiting > 1 ? 's' : ''} asked to join your agency.</b> Review on the Team page →</a>`;
+  }
   const w = m.approvals_waiting;
   if (w?.to_confirm && !(name === 'owner' && ['approvals', 'finance'].includes(parts[1]))) {
     return `<a class="banner warn action-banner" href="#/owner/approvals" style="display:flex;gap:10px;align-items:center;margin-bottom:16px;text-decoration:none"><b>${w.to_confirm} payment${w.to_confirm > 1 ? 's' : ''} waiting for your confirmation.</b> Open Payment approvals →</a>`;
@@ -278,7 +281,7 @@ async function viewLanding() {
 const SIGNIN_ROLES = [
   ['director', 'Agency', 'Run an agency · AED 999/month · 999 records a day shared by your team'],
   ['solo', 'Solo agent', 'Work on your own · AED 99/month · 99 records a day'],
-  ['member', 'Team member', 'Join your agency — use the Google email your agency invited'],
+  ['member', 'Agent in an agency', 'Work under your agency’s account — your agency approves you and sets your daily limit'],
   ['owner', 'Platform owner', 'AI-DATA owner console (owner’s Google account only)'],
   ['finance', 'Finance admin', 'Verify payments, activation links (approved accounts only)'],
 ];
@@ -291,10 +294,32 @@ function setSignupProfile(p) { try { p ? sessionStorage.setItem(SIGNUP_KEY, JSON
 const ROLE_HINTS = {
   director: 'You will create your agency account next. Your team shares the agency\'s 999 records a day; you can give each member a personal daily limit.',
   solo: 'You will create your agent account next: 99 records a day for you.',
-  member: 'Use the same email your agency director invited. Your daily limit comes from your agency\'s plan and any personal limit your director sets.',
+  member: 'Choose your agency below. After you sign in, your agency approves you and sets your role and daily limit. If your agency already invited you, use the email they invited.',
   owner: 'Only the platform owner\'s Google account is accepted.',
   finance: 'Only approved finance accounts are accepted.',
 };
+
+// Agency picker: type part of the name, choose from the list (names only).
+function agencyField(label = 'Your agency') {
+  return `<label class="field">${label}<input type="text" name="agency" required autocomplete="off" list="agency-options" data-agency-search placeholder="Start typing the agency name"><datalist id="agency-options"></datalist>
+    <span class="small muted">Your agency must already have an AI-DATA account.</span></label>`;
+}
+async function resolveAgency(name) {
+  const n = String(name || '').trim().toLowerCase();
+  const list = await GET(`/api/public/agencies?q=${encodeURIComponent(n)}`);
+  const hit = list.find((a) => a.name.toLowerCase() === n) || (list.length === 1 ? list[0] : null);
+  if (!hit) throw new Error(list.length ? 'Several agencies match — choose yours from the list.' : 'No agency with that name. Check the spelling, or ask your agency for its exact name on AI-DATA.');
+  return hit;
+}
+document.addEventListener('input', async (e) => {
+  const el = e.target.closest?.('[data-agency-search]');
+  if (!el || el.value.trim().length < 2) return;
+  try {
+    const list = await GET(`/api/public/agencies?q=${encodeURIComponent(el.value.trim())}`);
+    const dl = document.getElementById('agency-options');
+    if (dl) dl.innerHTML = list.map((a) => `<option value="${esc(a.name)}"></option>`).join('');
+  } catch { /* typing continues */ }
+});
 
 async function viewSignIn() {
   const c = state.cfg;
@@ -314,7 +339,7 @@ async function viewSignIn() {
   if (role && !pendingActivation) {
     details = profile && !returning
       ? `<div class="card grid">${step(2, 'Your details', true)}
-          <div class="kv"><span class="k">Full name</span><span class="v">${esc(profile.full_name)}</span><span class="k">Mobile</span><span class="v mono">${esc(profile.phone)}</span><span class="k">Email</span><span class="v">${esc(profile.email)}</span></div>
+          <div class="kv"><span class="k">Full name</span><span class="v">${esc(profile.full_name)}</span><span class="k">Mobile</span><span class="v mono">${esc(profile.phone)}</span><span class="k">Email</span><span class="v">${esc(profile.email)}</span>${profile.agency_name ? `<span class="k">Agency</span><span class="v"><b>${esc(profile.agency_name)}</b></span>` : ''}</div>
           <button class="btn sm ghost" data-act="signup-edit" style="justify-self:start">Edit details</button></div>`
       : returning
         ? `<div class="card grid">${step(2, 'Welcome back', true)}<p class="small muted" style="margin:0">Sign in with the Google account you registered with. <a href="#" data-act="signup-new">New here? Enter your details</a></p></div>`
@@ -323,6 +348,7 @@ async function viewSignIn() {
             <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" placeholder="e.g. Sara Al Mansouri"></label>
             <label class="field">Mobile number<input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="+971 50 123 4567"></label>
             <label class="field">Email<input type="email" name="email" required autocomplete="email" placeholder="name@company.com"><span class="small muted">Must be the email of the Google account you will sign in with.</span></label>
+            ${role === 'member' ? agencyField() : ''}
             <div class="row"><button class="btn primary">Continue</button><a href="#" class="small" data-act="signup-returning">I already have an account</a></div>
           </form>`;
   }
@@ -392,12 +418,26 @@ async function viewProfile() {
 // ---------------------------------------------------------------------------------
 // Onboarding & activation
 // ---------------------------------------------------------------------------------
-async function viewOnboarding() {
-  const plans = (await GET('/api/public/plans')).plans;
+async function viewOnboarding(_p, query = {}) {
   const role = safeGet('aih_signin_role');
+  const reqs = state.me.join_requests || [];
+  const pending = reqs.find((r) => r.status === 'PENDING');
+  const declined = reqs.find((r) => r.status === 'DECLINED');
+  if (!query.own && (pending || role === 'member')) {
+    return `<div class="page-head"><div><div class="kicker">Agent in an agency</div><h1>${pending ? 'Waiting for approval' : 'Join your agency'}</h1></div></div>
+    ${pending ? `<div class="card grid" style="max-width:640px;gap:10px"><div class="banner cold">⏳ You asked to join <b>${esc(pending.org_name)}</b> on ${fmtDT(pending.created_at)}. As soon as they approve you, this page opens your agency's workspace.</div>
+        <p class="small muted" style="margin:0">Your agency sees your name, email and mobile on its Team page. You can remind them, or cancel and choose another agency.</p>
+        <div class="row"><button class="btn" data-act="join-refresh">Check again</button><button class="btn ghost" data-act="join-cancel" data-id="${pending.id}">Cancel request</button></div></div>`
+      : `<form class="card grid" data-form="join-agency" style="max-width:640px;gap:12px">
+        ${declined ? `<div class="banner warn">${esc(declined.org_name)} did not approve your request. Choose another agency or create your own account.</div>` : ''}
+        <p class="small muted" style="margin:0">Type your agency's name and choose it. They will approve you and set your role and daily limit.</p>
+        ${agencyField()}<button class="btn primary" style="justify-self:start">Ask to join</button></form>`}
+    <p class="small" style="margin-top:16px">Working on your own instead? <a href="#/onboarding?own=1">Create my own account</a></p>`;
+  }
+  const plans = (await GET('/api/public/plans')).plans;
   const want = role === 'solo' ? 'AGENT_MONTHLY' : 'AGENCY_MONTHLY';
   const pick = plans.some((p) => p.code === want) ? want : plans[0]?.code;
-  const memberNote = role === 'member' ? `<div class="banner warn" style="max-width:760px;margin-bottom:16px"><b>Joining an agency?</b> Ask your agency director to invite <b>${esc(state.me.user.email)}</b> under Team, then sign in again. You only need the form below if you want your own organization.</div>` : '';
+  const memberNote = role === 'member' && !query.own ? `<div class="banner warn" style="max-width:760px;margin-bottom:16px"><b>Joining an agency?</b> Ask your agency director to invite <b>${esc(state.me.user.email)}</b> under Team, then sign in again. You only need the form below if you want your own organization.</div>` : '';
   return `<div class="page-head"><div><div class="kicker">Step 1 of 2</div><h1>${t('create_org')}</h1></div></div>
   ${memberNote}<form class="card grid" data-form="create-org" style="max-width:760px">
     <div class="grid g2">${plans.map((p) => `<label class="persona" style="cursor:pointer"><input type="radio" name="plan" value="${p.code}" ${p.code === pick ? 'checked' : ''}>
@@ -774,8 +814,8 @@ async function viewLead(id) {
 }
 
 async function viewTeam() {
-  const m = await GET('/api/org/members');
   const manage = can('members.manage');
+  const [m, joins] = await Promise.all([GET('/api/org/members'), manage ? GET('/api/org/join-requests') : Promise.resolve([])]);
   const limit = m.account_limit;
   const capCell = (x) => {
     const used = `${fmtNum(x.used_today)}${x.daily_cap != null ? ` / ${fmtNum(x.daily_cap)}` : ''}`;
@@ -785,6 +825,12 @@ async function viewTeam() {
       <button class="btn sm">Save</button><span class="small muted">${fmtNum(x.used_today)} today</span></form>`;
   };
   return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('team')}</h1></div><div class="spacer"></div><span class="badge gold">Seats: ${t('unlimited_members')}</span>${limit ? `<span class="badge">Account limit: ${fmtNum(limit)} / day</span>` : ''}</div>
+  ${joins.length ? `<div class="card" style="margin-bottom:16px;border:2px solid var(--gold)"><h3 style="margin-top:0">Agents asking to join (${joins.length})</h3>
+    ${joins.map((j) => `<form class="row" data-form="join-approve" data-id="${j.id}" style="border-top:1px solid var(--line);padding:10px 0;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:220px"><b>${esc(j.name)}</b><br><span class="small muted">${esc(j.email)}${j.phone ? ` · <span class="mono">${esc(j.phone)}</span>` : ''} · asked ${fmtDT(j.created_at)}</span></div>
+      <select name="role" style="width:auto" aria-label="Role for ${esc(j.name)}">${['AGENT', 'TEAM_LEADER', 'SALES_MANAGER', 'MARKETING_MANAGER', 'AUDITOR'].map((r) => `<option value="${r}">${esc(human(r))}</option>`).join('')}</select>
+      <input type="number" name="daily_cap" min="0" ${limit ? `max="${limit}"` : ''} placeholder="Daily limit" style="width:120px" aria-label="Daily limit for ${esc(j.name)}">
+      <button class="btn sm primary">Approve</button><button type="button" class="btn sm ghost" data-act="join-decline" data-id="${j.id}">Decline</button></form>`).join('')}</div>` : ''}
   <div class="banner cold" style="margin-bottom:16px">❄ ${esc(m.quota_note)}</div>
   <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>${t('name')}</th><th>Mobile</th><th>${t('email')}</th><th>${t('role')}</th><th>Daily limit (used today)</th><th></th></tr></thead><tbody>${m.members.map((x) => `<tr>
     <td><b>${esc(x.name)}</b></td><td class="small mono">${esc(x.phone || '—')}</td><td class="small">${esc(x.email)}</td><td><span class="badge">${esc(human(x.role))}</span></td>
@@ -1101,6 +1147,9 @@ const actions = {
     } catch (e) { toast(errMsg(e), true); }
   },
   'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); render(); },
+  'join-refresh': async () => { await loadMe(); if (state.me.active_org) { toast('Approved ✓ Welcome to your agency.'); go('#/overview'); } else { toast('Still waiting for approval.'); render(); } },
+  'join-cancel': async (el) => { if (confirm('Cancel your request to join this agency?')) { await api('DELETE', `/api/me/join-requests/${el.dataset.id}`); await loadMe(); render(); } },
+  'join-decline': async (el) => { if (confirm('Decline this request?')) { await POST(`/api/org/join-requests/${el.dataset.id}`, { approve: false }); toast('Declined'); await loadMe(); render(); } },
   'import-job-delete': async (el) => { if (confirm(`Delete import #${el.dataset.id} from the history? Investor records are kept.`)) { await api('DELETE', `/api/owner/source/jobs/${el.dataset.id}`); toast('Removed from history ✓'); render(); } },
   'import-history-clear': (el) => confirmDelete({ title: 'Clear import history', phrase: 'CLEAR IMPORT HISTORY',
     text: `Removes all ${el.dataset.count} entries from the import history. Investor records are kept.`,
@@ -1233,8 +1282,21 @@ function updateBasket() {
 }
 
 const forms = {
+  'join-agency': async (f) => {
+    const agency = await resolveAgency(f.agency.value);
+    await POST('/api/me/join-requests', { org_id: agency.id });
+    await loadMe();
+    toast(`Request sent to ${agency.name} ✓`);
+    render();
+  },
+  'join-approve': async (f) => {
+    await POST(`/api/org/join-requests/${f.dataset.id}`, { approve: true, role: f.role.value, daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
+    toast('Approved ✓ The agent can start working.');
+    await loadMe(); render();
+  },
   'signup-profile': async (f) => {
-    const p = await POST('/api/auth/check-profile', { full_name: f.full_name.value, phone: f.phone.value, email: f.email.value });
+    const agency = f.agency ? await resolveAgency(f.agency.value) : null;
+    const p = await POST('/api/auth/check-profile', { full_name: f.full_name.value, phone: f.phone.value, email: f.email.value, ...(agency ? { agency_id: agency.id } : {}) });
     setSignupProfile(p);
     render();
   },
