@@ -337,7 +337,12 @@ async function viewSignIn() {
   const profile = signupProfile();
   const returning = state.signinReturning === true;
   const ready = !!role && (pendingActivation || returning || !!profile);
-  const google = c.google_client_id ? '<div id="gsi-btn" style="min-height:44px"></div>' : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`;
+  const inApp = inAppBrowser();
+  const inAppNote = inApp ? `<div class="banner warn" data-test="inapp-warning" style="flex-direction:column;gap:8px">
+      <span>You opened this page inside ${esc(inApp)}. Google does not allow sign-in here.</span>
+      <span style="font-weight:500">Tap the ⋮ or share menu and choose <b>Open in Chrome</b> / <b>Open in Safari</b>, or copy the link and paste it into your browser.</span>
+      <button type="button" class="btn sm" data-act="copy-signin-link">Copy link</button></div>` : '';
+  const google = c.google_client_id ? `${inAppNote}<div id="gsi-btn" style="min-height:44px;max-width:100%;overflow:hidden"></div>` : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`;
   const step = (n, title, done) => `<div class="row"><span class="badge ${done ? 'ok' : 'gold'}">${done ? '✓' : n}</span><h3 style="margin:0">${title}</h3></div>`;
 
   const roleCard = pendingActivation ? '' : `<div class="card grid">${step(1, 'Choose your account type', !!role)}
@@ -374,6 +379,19 @@ async function viewSignIn() {
   </div></div>`;
 }
 
+// Google blocks sign-in inside apps' built-in browsers (error 403 disallowed_useragent).
+// Returns the app's name when the page is open in one, otherwise ''.
+function inAppBrowser(ua = navigator.userAgent || '') {
+  const apps = [
+    [/WhatsApp/i, 'WhatsApp'], [/Instagram/i, 'Instagram'], [/FBAN|FBAV|FB_IAB|FBIOS/i, 'Facebook'],
+    [/Messenger/i, 'Messenger'], [/Line\//i, 'LINE'], [/Snapchat/i, 'Snapchat'], [/TikTok|musical_ly|BytedanceWebview/i, 'TikTok'],
+    [/LinkedInApp/i, 'LinkedIn'], [/Telegram/i, 'Telegram'], [/Twitter/i, 'X (Twitter)'],
+  ];
+  for (const [re, name] of apps) if (re.test(ua)) return name;
+  if (/Android/i.test(ua) && /; wv\)/.test(ua)) return 'an app';
+  return '';
+}
+
 function afterSignIn() {
   const el = document.getElementById('gsi-btn');
   if (!el || !state.cfg.google_client_id) return;
@@ -396,7 +414,8 @@ function afterSignIn() {
         } catch (e) { toast(errMsg(e), true); }
       },
     });
-    window.google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', width: 360, text: 'continue_with', locale: state.lang });
+    const width = Math.max(200, Math.min(360, Math.floor(el.clientWidth || 360)));
+    window.google.accounts.id.renderButton(el, { theme: 'outline', size: 'large', width, text: 'continue_with', locale: state.lang });
   };
   if (window.google?.accounts?.id) return init();
   const s = document.createElement('script');
@@ -1618,6 +1637,11 @@ const actions = {
   'signup-edit': () => { setSignupProfile(null); state.signinReturning = false; render(); },
   'signup-returning': () => { state.signinReturning = true; render(); },
   'signup-new': () => { state.signinReturning = false; render(); },
+  'copy-signin-link': async () => {
+    const link = location.origin + '/#/signin';
+    try { await navigator.clipboard.writeText(link); toast('Link copied. Paste it into Chrome or Safari.'); }
+    catch { window.prompt('Copy this link and open it in Chrome or Safari:', link); }
+  },
   'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
   logout: async () => { await POST('/api/auth/logout'); state.cfg = null; state.ih = { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null }; go('#/'); },
   notifs: async () => {
