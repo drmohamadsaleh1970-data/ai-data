@@ -1,4 +1,5 @@
 import { translator, LANGS, RTL } from './i18n.js';
+import { GUIDE_ROLES, GUIDE_FLOW, GUIDE_ACCESS } from './guide-content.js';
 
 // ---------------------------------------------------------------------------------
 // Core: state, API, formatting
@@ -114,7 +115,7 @@ function setLang(l, persist = true) {
 }
 
 const APP_ROUTES = {
-  overview: viewOverview, dashboard: viewDashboard, 'investor-history': viewInvestorHistory, 'my-cold': viewMyCold, hot: viewHot, crm: viewCrm,
+  overview: viewOverview, dashboard: viewDashboard, guide: viewGuide, 'investor-history': viewInvestorHistory, 'my-cold': viewMyCold, hot: viewHot, crm: viewCrm,
   team: viewTeam, reports: viewReports, billing: viewBilling, integrations: viewIntegrations, settings: viewSettings,
   onboarding: viewOnboarding, owner: viewOwner, activate: viewActivate, profile: viewProfile,
 };
@@ -140,7 +141,7 @@ async function render() {
     if (!APP_ROUTES[name] || name === '' || name === 'signin') name = hasOrg ? 'overview' : isFinance() ? 'owner' : 'onboarding';
     // Everyone gives a name and mobile number once; until then this is the only page.
     if (!state.me.profile_complete && name !== 'activate') name = 'profile';
-    if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations', 'profile'].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
+    if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations', 'profile', 'guide'].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
     const html = await APP_ROUTES[name](parts.slice(1), query);
     app.innerHTML = shell(name, parts, html);
     afterRender();
@@ -176,7 +177,7 @@ function shell(name, parts, content) {
   const link = (href, key, ico, active) => `<a class="nav-link ${active ? 'active' : ''}" href="${href}"><span class="ico">${ico}</span>${esc(t(key))}</a>`;
   const m = state.me;
   const org = m.active_org;
-  let nav = '';
+  let nav = link('#/guide', 'guide', '🧭', name === 'guide');
   if (org) {
     nav += `<div class="nav-group">${esc(org.name)}</div>`;
     nav += link('#/overview', 'overview', '◎', name === 'overview');
@@ -967,6 +968,68 @@ function ownerLeadModal(orgId, l) {
   <p class="small muted">Opening this lead was recorded in the audit log.</p>`;
 }
 
+// ---------------------------------------------------------------------------------
+// Guide: an interactive map per role (content in guide-content.js)
+// ---------------------------------------------------------------------------------
+function myGuideRole() {
+  if (isOwner()) return 'owner';
+  if (state.me?.user?.platform_role === 'PLATFORM_FINANCE_ADMIN') return 'finance';
+  const org = state.me?.active_org;
+  if (org) return org.kind === 'AGENT' ? 'solo' : can('crm.all') || can('members.manage') ? 'agency' : 'agent';
+  return { director: 'agency', solo: 'solo', member: 'agent' }[safeGet('aih_signin_role')] || 'agency';
+}
+const guideKey = (role) => `aih_guide_${state.me?.user?.id || 0}_${role}`;
+function guideDone(role) { try { return new Set(JSON.parse(localStorage.getItem(guideKey(role)) || '[]')); } catch { return new Set(); } }
+function guideSaveDone(role, set) { try { localStorage.setItem(guideKey(role), JSON.stringify([...set])); } catch { /* private mode: progress is not kept */ } }
+
+async function viewGuide(_p, query) {
+  const mine = myGuideRole();
+  const visible = isOwner() ? ['owner', 'finance', 'agency', 'agent', 'solo'] : mine === 'finance' ? ['finance'] : ['agency', 'agent', 'solo'];
+  const g = (state.guide ||= { role: null, step: 0, flow: [0, 0] });
+  if (query.role && visible.includes(query.role) && g.role !== query.role) { g.role = query.role; g.step = 0; }
+  if (!g.role || !visible.includes(g.role)) { g.role = mine; g.step = 0; }
+  const role = GUIDE_ROLES[g.role];
+  const done = guideDone(g.role);
+  const step = role.steps[Math.min(g.step, role.steps.length - 1)];
+  const own = g.role === mine;
+  const pct = Math.round((done.size / role.steps.length) * 100);
+  const [fl, fi] = g.flow;
+  const flowNode = GUIDE_FLOW[fl].nodes[fi];
+  const cell = (v) => (v === true ? '<span class="gyes" aria-label="Yes">✓</span>' : v === false ? '<span class="gno" aria-label="No">—</span>' : `<span class="small">${esc(v)}</span>`);
+  return `<div class="page-head"><div><div class="kicker">Guide</div><h1>How to use AI-DATA</h1><p class="muted" style="margin:4px 0 0">A map of what to do, step by step, for ${visible.length > 1 ? 'each role' : 'your role'}. Click any step.</p></div></div>
+  <div class="gtabs" role="tablist" aria-label="Role">${visible.map((k) => `<button type="button" role="tab" aria-selected="${k === g.role}" class="gtab ${k === g.role ? 'on' : ''}" data-act="guide-role" data-role="${k}"><span class="gi">${GUIDE_ROLES[k].icon}</span>${esc(GUIDE_ROLES[k].label)}${k === mine ? ' <span class="badge gold">You</span>' : ''}</button>`).join('')}</div>
+
+  <div class="card ghero"><div class="ghero-ico">${role.icon}</div><div style="flex:1;min-width:220px"><h2 style="margin:0">${esc(role.label)}</h2><p class="muted" style="margin:6px 0 0">${esc(role.summary)}</p></div>
+    <div class="gprog" title="${done.size} of ${role.steps.length} steps done"><div class="small muted">Your progress</div><div class="gprog-bar"><i style="width:${pct}%"></i></div><b>${done.size} / ${role.steps.length}</b></div></div>
+
+  <div class="gmap-wrap">
+    <ol class="gmap" aria-label="Steps">${role.steps.map((s, i) => `<li><button type="button" class="gstation ${i === g.step ? 'on' : ''} ${done.has(i) ? 'done' : ''}" data-act="guide-step" data-i="${i}" aria-current="${i === g.step ? 'step' : 'false'}">
+      <span class="gnum">${done.has(i) ? '✓' : i + 1}</span><span class="gico">${s.icon}</span><span class="gtitle">${esc(s.title)}</span></button></li>`).join('')}</ol>
+    <div class="card gdetail" aria-live="polite">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px"><div><div class="kicker">Step ${g.step + 1} of ${role.steps.length}</div><h2 style="margin:2px 0 0">${step.icon} ${esc(step.title)}</h2></div>
+        <label class="gcheck"><input type="checkbox" data-act="guide-done" data-i="${g.step}" ${done.has(g.step) ? 'checked' : ''}> Done</label></div>
+      <p class="gwhere">📍 Where: ${own ? `<a href="${step.href}"><b>${esc(step.where)}</b></a>` : `<b>${esc(step.where)}</b> <span class="small muted">(${esc(role.label)})</span>`}</p>
+      <p style="margin:0 0 10px">${esc(step.what)}</p>
+      <ol class="gsteps">${step.how.map((h) => `<li>${esc(h)}</li>`).join('')}</ol>
+      <div class="gtip">💡 ${esc(step.tip)}</div>
+      <div class="row" style="margin-top:14px;justify-content:space-between;flex-wrap:wrap">
+        <div class="row"><button type="button" class="btn sm" data-act="guide-step" data-i="${g.step - 1}" ${g.step === 0 ? 'disabled' : ''}>← Back</button><button type="button" class="btn sm" data-act="guide-step" data-i="${g.step + 1}" ${g.step >= role.steps.length - 1 ? 'disabled' : ''}>Next →</button></div>
+        ${own ? `<a class="btn sm primary" href="${step.href}">Go there →</a>` : ''}</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px"><h3 style="margin-top:0">How the portal works</h3><p class="small muted" style="margin-top:0">Click a step to see what happens.</p>
+    <div class="gflow">${GUIDE_FLOW.map((lane, li) => `<div class="glane"><div class="glane-name ${lane.color}">${esc(lane.lane)}</div><div class="glane-nodes">${lane.nodes.map(([name], ni) => `${ni ? '<span class="garrow" aria-hidden="true">→</span>' : ''}<button type="button" class="gnode ${lane.color} ${li === fl && ni === fi ? 'on' : ''}" data-act="guide-flow" data-lane="${li}" data-i="${ni}">${esc(name)}</button>`).join('')}</div></div>`).join('')}</div>
+    <div class="gflow-note" aria-live="polite"><b>${esc(flowNode[0])}</b> — ${esc(flowNode[1])}</div></div>
+
+  <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Who sees what</h3>
+    <div class="table-wrap"><table class="gaccess"><thead><tr><th>Role</th>${GUIDE_ACCESS.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+    <tbody>${Object.entries(GUIDE_ACCESS.rows).filter(([k]) => isOwner() || visible.includes(k) || k === 'owner').map(([k, vals]) => `<tr class="${k === g.role ? 'gsel' : ''}"><td><b>${GUIDE_ROLES[k].icon} ${esc(GUIDE_ROLES[k].label)}</b></td>${vals.map((v) => `<td>${cell(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+    <p class="small muted">Every view of a lead by the platform owner, and every change, is recorded in the audit log.</p></div>
+
+  <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Questions</h3>${role.faq.map(([q, a]) => `<details class="gfaq"><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join('')}</div>`;
+}
+
 async function viewTeam() {
   const manage = can('members.manage');
   const [m, joins] = await Promise.all([GET('/api/org/members'), manage ? GET('/api/org/join-requests') : Promise.resolve([])]);
@@ -1371,6 +1434,10 @@ const actions = {
       : `https://wa.me/${el.dataset.phone}?text=${encodeURIComponent(box.value)}`;
     window.open(url, '_blank', 'noopener');
   },
+  'guide-role': (el) => { state.guide = { ...(state.guide || {}), role: el.dataset.role, step: 0 }; go('#/guide'); },
+  'guide-step': (el) => { const i = Number(el.dataset.i); if (Number.isInteger(i) && i >= 0) { state.guide.step = i; render(); } },
+  'guide-flow': (el) => { state.guide.flow = [Number(el.dataset.lane), Number(el.dataset.i)]; render(); },
+  'guide-done': (el) => { const set = guideDone(state.guide.role); const i = Number(el.dataset.i); el.checked ? set.add(i) : set.delete(i); guideSaveDone(state.guide.role, set); render(); },
   'owner-open-lead': async (el) => { const l = await GET(`/api/owner/orgs/${el.dataset.org}/crm/leads/${el.dataset.id}`); openModal(ownerLeadModal(el.dataset.org, l)); },
   'remove-member': async (el) => { if (confirm('Remove this member?')) { await api('DELETE', `/api/org/members/${el.dataset.id}`); render(); } },
   'pay-paypal': async (el) => { try { const r = await POST('/api/billing/paypal', { plan: el.dataset.plan }); if (r.approve_url) location.href = r.approve_url; } catch (e) { toast(errMsg(e), true); } },
