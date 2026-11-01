@@ -9,7 +9,7 @@ let ready;
 let lastSweep = 0;
 
 async function init() {
-  if (!process.env.DATABASE_URL) console.warn('[db] DATABASE_URL is not set: using temporary /tmp storage that is lost on every cold start');
+  if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) console.warn('[db] DATABASE_URL is not set: using temporary /tmp storage that is lost on every cold start');
   process.env.DB_FILE ||= '/tmp/aihome.db';
   process.env.EXPORT_DIR ||= '/tmp/exports';
   const { getDb } = await import('../server/db.js');

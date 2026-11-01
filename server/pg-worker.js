@@ -31,8 +31,13 @@ async function start({ url, schema, state, port, poolMax }) {
   pg.types.setTypeParser(1700, (v) => Number(v));
 
   const local = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(url) || /sslmode=disable/.test(url);
+  // TLS is set below. Supabase's own strings carry sslmode=require (which newer pg reads
+  // as full certificate verification) and a 'supa' hint; drop both from the URL.
+  const clean = new URL(url);
+  clean.searchParams.delete('sslmode');
+  clean.searchParams.delete('supa');
   const pool = new pg.Pool({
-    connectionString: url,
+    connectionString: clean.toString(),
     max: poolMax,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 15_000,

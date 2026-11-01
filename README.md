@@ -136,7 +136,7 @@ The repository is ready to import into Vercel: `vercel.json` plus `api/index.js`
 
 | Variable | Needed for |
 |---|---|
-| `DATABASE_URL` | Permanent storage (required for real use). A PostgreSQL connection string; for Supabase use the **Transaction pooler** string (port 6543) from Connect → Direct |
+| `DATABASE_URL` | Permanent storage (required for real use). A PostgreSQL connection string; for Supabase use the **Transaction pooler** string (port 6543) from Connect → Direct. The Supabase integration for Vercel sets `POSTGRES_URL` instead, which is used when `DATABASE_URL` is absent |
 | `GOOGLE_CLIENT_ID` | Signing in (nobody can sign in without it) |
 | `OWNER_EMAIL`, `OWNER_TOTP_SECRET` | The platform owner account and its MFA |
 | `BASE_URL` (optional) | Address used in activation links; defaults to the address the request came in on |

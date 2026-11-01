@@ -494,7 +494,9 @@ CREATE TABLE IF NOT EXISTS owner_export_job (
 
 let db;
 
-export const usingPostgres = () => !!process.env.DATABASE_URL;
+// DATABASE_URL, or POSTGRES_URL as set by the Supabase integration for Vercel (pooler).
+export const databaseUrl = () => process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+export const usingPostgres = () => !!databaseUrl();
 
 // SQLite DDL -> PostgreSQL DDL. The schema text above is written once for both.
 export function pgSchema(sql = SCHEMA) {
@@ -519,7 +521,7 @@ export function openDb(file = process.env.DB_FILE || path.resolve('data/aihome.d
 
 function openPostgres() {
   const schema = process.env.DATABASE_SCHEMA || null; // tests use a private schema
-  const conn = new PgConnection(process.env.DATABASE_URL, {
+  const conn = new PgConnection(databaseUrl(), {
     schema, idTables: ID_TABLES, poolMax: Number(process.env.DATABASE_POOL_MAX || 3),
   });
   // Several server instances may start at once; the lock lets one create the tables.

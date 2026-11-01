@@ -8,7 +8,7 @@ export function freshTestDb(prefix = 'aihome-test-') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   process.env.DB_FILE = path.join(dir, 'test.db');
   process.env.EXPORT_DIR = path.join(dir, 'exports');
-  if (process.env.DATABASE_URL) process.env.DATABASE_SCHEMA = `test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  if (process.env.DATABASE_URL || process.env.POSTGRES_URL) process.env.DATABASE_SCHEMA = `test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   return dir;
 }
 
