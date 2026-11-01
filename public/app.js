@@ -471,7 +471,7 @@ async function viewOverview() {
 const srcBadge = (s) => (s === 'COLD' ? '<span class="badge cold">❄ COLD</span>' : s === 'HOT' ? '<span class="badge hot">🔥 HOT</span>' : `<span class="badge">${esc(s)}</span>`);
 const REASON_LABEL = {
   RIGHTS_PENDING_REVIEW: 'Rights pending review', SUPPRESSED_DO_NOT_CONTACT: 'Do-not-contact', TRANSFER_DISABLED_PENDING_LEGAL_APPROVAL: 'Transfers disabled pending legal approval',
-  DAILY_QUOTA_EXHAUSTED: 'Daily allowance used up', NOT_FOUND: 'Record not found', NO_CHARGE_ALREADY_IN_CRM: 'Already in CRM — not charged',
+  DAILY_QUOTA_EXHAUSTED: 'Daily allowance used up', USER_DAILY_CAP_REACHED: 'Personal daily limit reached', NOT_FOUND: 'Record not found', NO_CHARGE_ALREADY_IN_CRM: 'Already in CRM — not charged',
 };
 
 async function viewInvestorHistory() {
@@ -1147,6 +1147,10 @@ const forms = {
 };
 
 document.addEventListener('click', (e) => {
+  // Clicking the menu item of the page you are on reloads its data (the hash does not
+  // change, so the router would otherwise do nothing).
+  const nav = e.target.closest('a[href^="#/"]');
+  if (nav && !nav.hasAttribute('data-act') && nav.getAttribute('href') === location.hash) { e.preventDefault(); render(); return; }
   const a = e.target.closest('[data-act]');
   if (a && actions[a.dataset.act]) {
     if (a.tagName !== 'INPUT') e.preventDefault();
