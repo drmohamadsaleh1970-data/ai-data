@@ -114,10 +114,15 @@ export function createApp(options = {}) {
   }
   r.post('/auth/check-profile', ok((req) => {
     const p = checkProfile(req.body || {});
-    if (req.body?.agency_id) { const org = crm.agencyById(req.body.agency_id); return { ...p, agency_id: org.id, agency_name: org.name }; }
+    if (req.body?.agency_id) {
+      const org = crm.agencyById(req.body.agency_id);
+      if (req.body.invitation_id) crm.checkInvitationPick(org.id, req.body.invitation_id, p.email);
+      return { ...p, agency_id: org.id, agency_name: org.name, invitation_id: req.body.invitation_id ? Number(req.body.invitation_id) : null };
+    }
     return p;
   }));
   r.get('/public/agencies', ok((req) => crm.searchAgencies(req.query.q)));
+  r.get('/public/agencies/:id/roster', ok((req) => crm.agencyRoster(req.params.id)));
   r.post('/auth/logout', ok((req, res) => { destroySession(req, res); return { ok: true }; }));
   r.post('/public/inquiry', ok((req) => hot.intakeInquiry({ siteKey: req.get('x-site-key') || req.body.site_key, body: req.body || {}, ip: req.ip, origin: req.get('origin') })));
   r.post('/public/search-event', ok((req) => hot.recordSearchEvent(req.body || {})));

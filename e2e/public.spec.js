@@ -44,6 +44,6 @@ test('agency director sees mobile numbers and sets a personal daily limit for a 
   await expect(page.getByText('Daily limit saved')).toBeVisible();
   await expect(page.getByLabel('Daily limit for Aisha Agent (TEST)')).toHaveValue('25');
   // Invitations carry name, mobile and limit.
-  await expect(page.getByRole('heading', { name: 'Invite' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add an agent' })).toBeVisible();
   await expect(page.locator('form[data-form=invite]').getByLabel('Daily limit (records)')).toBeVisible();
 });

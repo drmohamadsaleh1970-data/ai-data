@@ -336,28 +336,55 @@ async function viewSignIn() {
       ${SIGNIN_ROLES.map(([k, n, d]) => `<button class="persona" data-act="pick-role" data-role="${k}" ${k === role ? 'style="border:2px solid var(--gold)" aria-pressed="true"' : 'aria-pressed="false"'}><span class="avatar">${k === role ? '✓' : n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>`;
 
   let details = '';
-  if (role && !pendingActivation) {
-    details = profile && !returning
-      ? `<div class="card grid">${step(2, 'Your details', true)}
-          <div class="kv"><span class="k">Full name</span><span class="v">${esc(profile.full_name)}</span><span class="k">Mobile</span><span class="v mono">${esc(profile.phone)}</span><span class="k">Email</span><span class="v">${esc(profile.email)}</span>${profile.agency_name ? `<span class="k">Agency</span><span class="v"><b>${esc(profile.agency_name)}</b></span>` : ''}</div>
-          <button class="btn sm ghost" data-act="signup-edit" style="justify-self:start">Edit details</button></div>`
-      : returning
-        ? `<div class="card grid">${step(2, 'Welcome back', true)}<p class="small muted" style="margin:0">Sign in with the Google account you registered with. <a href="#" data-act="signup-new">New here? Enter your details</a></p></div>`
-        : `<form class="card grid" data-form="signup-profile" style="gap:12px">${step(2, 'Your details', false)}
-            <p class="small muted" style="margin:0">${esc(ROLE_HINTS[role] || '')}</p>
-            <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" placeholder="e.g. Sara Al Mansouri"></label>
+  const member = role === 'member';
+  const detailFields = (pickedName = '') => `
+            <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" placeholder="e.g. Sara Al Mansouri" value="${esc(pickedName)}"></label>
             <label class="field">Mobile number<input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="+971 50 123 4567"></label>
-            <label class="field">Email<input type="email" name="email" required autocomplete="email" placeholder="name@company.com"><span class="small muted">Must be the email of the Google account you will sign in with.</span></label>
-            ${role === 'member' ? agencyField() : ''}
+            <label class="field">Email<input type="email" name="email" required autocomplete="email" placeholder="name@company.com"><span class="small muted">Must be the email of the Google account you will sign in with.</span></label>`;
+  if (role && !pendingActivation) {
+    if (profile && !returning) {
+      details = `<div class="card grid">${step(2, member ? 'Your agency and details' : 'Your details', true)}
+          <div class="kv"><span class="k">Full name</span><span class="v">${esc(profile.full_name)}</span><span class="k">Mobile</span><span class="v mono">${esc(profile.phone)}</span><span class="k">Email</span><span class="v">${esc(profile.email)}</span>
+          ${profile.agency_name ? `<span class="k">Agency</span><span class="v"><b>${esc(profile.agency_name)}</b></span><span class="k">Joining</span><span class="v">${profile.invitation_id ? '✓ Listed by your agency — you join straight away' : 'Your agency approves your request after you sign in'}</span>` : ''}</div>
+          <button class="btn sm ghost" data-act="signup-edit" style="justify-self:start">Edit details</button></div>`;
+    } else if (returning) {
+      details = `<div class="card grid">${step(2, 'Welcome back', true)}<p class="small muted" style="margin:0">Sign in with the Google account you registered with. <a href="#" data-act="signup-new">New here? Enter your details</a></p></div>`;
+    } else if (member && !state.signupAgency) {
+      // Agent in an agency, step 2: which agency.
+      details = `<form class="card grid" data-form="signup-agency" style="gap:12px">${step(2, 'Your agency', false)}
+            <p class="small muted" style="margin:0">Type your agency's name and choose it from the list.</p>
+            ${agencyField()}
+            <div class="row"><button class="btn primary">Continue</button><a href="#" class="small" data-act="signup-returning">I already have an account</a></div></form>`;
+    } else if (member) {
+      // Step 3: pick your name from the agents the agency added, or ask to join.
+      const roster = await GET(`/api/public/agencies/${state.signupAgency.id}/roster`).catch(() => []);
+      const picked = state.signupPick ?? (roster.length ? null : 'new');
+      const pickedEntry = roster.find((r) => String(r.id) === String(picked));
+      details = `<div class="card grid">${step(2, 'Your agency', true)}<div class="row"><b>${esc(state.signupAgency.name)}</b><button class="btn sm ghost" data-act="signup-agency-change">Change</button></div></div>
+        <div class="card grid" style="gap:10px">${step(3, 'Who are you?', !!picked)}
+          ${roster.length ? `<p class="small muted" style="margin:0">Agents added by ${esc(state.signupAgency.name)}. Choose your name:</p>
+            <div class="grid" style="gap:6px">${roster.map((r) => `<button type="button" class="persona" data-act="signup-pick" data-id="${r.id}" aria-pressed="${String(r.id) === String(picked)}" ${String(r.id) === String(picked) ? 'style="border:2px solid var(--gold)"' : ''}><span class="avatar">${String(r.id) === String(picked) ? '✓' : esc(r.name[0])}</span><span><b>${esc(r.name)}</b><br><span class="small muted">${esc(r.email_hint)}</span></span></button>`).join('')}</div>`
+            : `<p class="small muted" style="margin:0">${esc(state.signupAgency.name)} has not added any agents yet.</p>`}
+          <button type="button" class="persona" data-act="signup-pick" data-id="new" aria-pressed="${picked === 'new'}" ${picked === 'new' ? 'style="border:2px solid var(--gold)"' : ''}><span class="avatar">${picked === 'new' ? '✓' : '+'}</span><span><b>My name isn't listed</b><br><span class="small muted">Add your details and ask ${esc(state.signupAgency.name)} to approve you</span></span></button>
+        </div>
+        ${picked ? `<form class="card grid" data-form="signup-profile" style="gap:12px">${step(4, 'Your details', false)}
+            <p class="small muted" style="margin:0">${pickedEntry ? `Use the email your agency added (${esc(pickedEntry.email_hint)}). You join ${esc(state.signupAgency.name)} as soon as you sign in.` : `After you sign in, ${esc(state.signupAgency.name)} approves you and sets your role and daily limit.`}</p>
+            ${detailFields(pickedEntry ? '' : '')}
+            <button class="btn primary" style="justify-self:start">Continue</button></form>` : ''}`;
+    } else {
+      details = `<form class="card grid" data-form="signup-profile" style="gap:12px">${step(2, 'Your details', false)}
+            <p class="small muted" style="margin:0">${esc(ROLE_HINTS[role] || '')}</p>
+            ${detailFields()}
             <div class="row"><button class="btn primary">Continue</button><a href="#" class="small" data-act="signup-returning">I already have an account</a></div>
           </form>`;
+    }
   }
 
   return `<div class="auth-wrap"><div class="auth-card">
     <div style="text-align:center">${logo()}</div>
     ${roleCard}${details}
     <div class="card grid">
-      ${pendingActivation ? `<h2 style="margin:0">${t('sign_in')}</h2>` : step(3, `${t('sign_in')} with Google${chosen ? ` · ${esc(chosen[1])}` : ''}`, false)}
+      ${pendingActivation ? `<h2 style="margin:0">${t('sign_in')}</h2>` : step(member && !returning ? 5 : 3, `${t('sign_in')} with Google${chosen ? ` · ${esc(chosen[1])}` : ''}`, false)}
       ${pendingActivation ? `<div class="banner ok">Sign in with the Google account your activation email was sent to.</div>` : ''}
       ${ready ? google : `<p class="muted" style="margin:0">${role ? 'Enter your details above, then continue with Google.' : 'Choose your account type above.'}</p>`}
       <p class="small muted">We only use your Google identity (name, email, account ID) to sign you in. We never request access to your inbox.</p>
@@ -837,7 +864,7 @@ async function viewTeam() {
     <td>${capCell(x)}</td>
     <td>${manage && x.role !== 'ORG_OWNER' ? `<button class="btn sm ghost" data-act="remove-member" data-id="${x.user_id}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
   <div class="grid g2" style="align-items:start">
-    ${manage ? `<form class="card grid" data-form="invite" style="gap:10px"><h3>${t('invite')}</h3><p class="small muted">The person signs in with Google using this email and joins this account. Leave the daily limit empty to let them use the shared allowance.</p>
+    ${manage ? `<form class="card grid" data-form="invite" style="gap:10px"><h3>Add an agent</h3><p class="small muted">The agent appears on your agency's sign-in list: they choose "Agent in an agency", pick ${esc(state.me.active_org.name)}, choose their name and sign in with Google using this email — no approval needed. Leave the daily limit empty to use the shared allowance.</p>
       <div class="grid g2">
         <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120"></label>
         <label class="field">Mobile number<input type="tel" name="phone" inputmode="tel" placeholder="+971 50 123 4567"></label>
@@ -845,8 +872,8 @@ async function viewTeam() {
         <label class="field">${t('role')}<select name="role">${['AGENT', 'TEAM_LEADER', 'SALES_MANAGER', 'MARKETING_MANAGER', 'ORG_ADMIN', 'AGENCY_DIRECTOR', 'AUDITOR'].map((r) => `<option value="${r}">${esc(human(r))}</option>`).join('')}</select></label>
         <label class="field">Daily limit (records)<input type="number" name="daily_cap" min="0" ${limit ? `max="${limit}"` : ''} placeholder="No personal limit"></label>
       </div>
-      <button class="btn primary" style="justify-self:start">${t('invite')}</button></form>` : ''}
-    <div class="card"><h3>Pending invitations (${m.invitations.length})</h3>${m.invitations.slice(0, 20).map((i) => `<div class="small" style="padding:6px 0;border-top:1px solid var(--line)"><b>${esc(i.full_name || i.email)}</b>${i.full_name ? ` · ${esc(i.email)}` : ''}${i.phone ? ` · <span class="mono">${esc(i.phone)}</span>` : ''}<br>${esc(human(i.role))}${i.daily_cap != null ? ` · ${fmtNum(i.daily_cap)}/day` : ''} · expires ${fmtDate(i.expires_at)}</div>`).join('') || '<span class="muted">—</span>'}${m.invitations.length > 20 ? `<div class="small muted">+${m.invitations.length - 20} more</div>` : ''}</div>
+      <button class="btn primary" style="justify-self:start">Add agent</button></form>` : ''}
+    <div class="card"><h3>Added, not signed in yet (${m.invitations.length})</h3>${m.invitations.slice(0, 20).map((i) => `<div class="small" style="padding:6px 0;border-top:1px solid var(--line)"><b>${esc(i.full_name || i.email)}</b>${i.full_name ? ` · ${esc(i.email)}` : ''}${i.phone ? ` · <span class="mono">${esc(i.phone)}</span>` : ''}<br>${esc(human(i.role))}${i.daily_cap != null ? ` · ${fmtNum(i.daily_cap)}/day` : ''} · expires ${fmtDate(i.expires_at)}</div>`).join('') || '<span class="muted">—</span>'}${m.invitations.length > 20 ? `<div class="small muted">+${m.invitations.length - 20} more</div>` : ''}</div>
   </div>`;
 }
 
@@ -1167,6 +1194,8 @@ const actions = {
     text: 'Wipes the whole Master Cold database: every imported or synced investor, their transactions and the import history.',
     run: (confirm) => POST('/api/owner/investors/delete-all', { confirm }) }),
   'signup-edit': () => { setSignupProfile(null); state.signinReturning = false; render(); },
+  'signup-agency-change': () => { state.signupAgency = null; state.signupPick = null; render(); },
+  'signup-pick': (el) => { state.signupPick = el.dataset.id; render(); },
   'signup-returning': () => { state.signinReturning = true; render(); },
   'signup-new': () => { state.signinReturning = false; render(); },
   'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
@@ -1294,9 +1323,15 @@ const forms = {
     toast('Approved ✓ The agent can start working.');
     await loadMe(); render();
   },
+  'signup-agency': async (f) => {
+    state.signupAgency = await resolveAgency(f.agency.value);
+    state.signupPick = null;
+    render();
+  },
   'signup-profile': async (f) => {
-    const agency = f.agency ? await resolveAgency(f.agency.value) : null;
-    const p = await POST('/api/auth/check-profile', { full_name: f.full_name.value, phone: f.phone.value, email: f.email.value, ...(agency ? { agency_id: agency.id } : {}) });
+    const agency = safeGet('aih_signin_role') === 'member' ? state.signupAgency : null;
+    const invitation = agency && state.signupPick && state.signupPick !== 'new' ? Number(state.signupPick) : null;
+    const p = await POST('/api/auth/check-profile', { full_name: f.full_name.value, phone: f.phone.value, email: f.email.value, ...(agency ? { agency_id: agency.id, invitation_id: invitation } : {}) });
     setSignupProfile(p);
     render();
   },
@@ -1337,7 +1372,7 @@ const forms = {
   'lead-task': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/tasks`, { title: f.title.value, due_at: new Date(f.due_at.value).toISOString() }); toast('✓'); render(); },
   invite: async (f) => {
     await POST('/api/org/invitations', { full_name: f.full_name.value, phone: f.phone.value || undefined, email: f.email.value, role: f.role.value, daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
-    toast('Invitation recorded ✓'); render();
+    toast('Agent added ✓ They can now pick their name on the sign-in page.'); render();
   },
   'activate-code': async (f) => {
     try {

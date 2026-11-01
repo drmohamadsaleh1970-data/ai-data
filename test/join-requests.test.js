@@ -78,3 +78,24 @@ test('declined and cancelled requests give no access', async () => {
   assert.equal((await b.del(`/api/me/join-requests/${again.data.id}`)).status, 200);
   assert.equal((await d.get('/api/org/join-requests')).data.length, 0);
 });
+
+test('roster: agents the agency added are listed with a short name and email hint; picking one needs that email', async () => {
+  const d = client(srv.base);
+  await d.login('director');
+  await d.post('/api/org/invitations', { full_name: 'Rami Khoury Saad', phone: '050 121 2121', email: 'rami.k@roster.example', role: 'AGENT', daily_cap: 6 });
+  const c = client(srv.base);
+  const roster = (await c.get(`/api/public/agencies/${marina.id}/roster`)).data;
+  const rami = roster.find((r) => r.name === 'Rami S.');
+  assert.ok(rami, JSON.stringify(roster));
+  assert.equal(rami.email_hint, 'r•••@roster.example');
+  assert.ok(!JSON.stringify(roster).includes('121'), 'no mobile numbers');
+  assert.ok(!JSON.stringify(roster).includes('rami.k@'), 'no full emails');
+
+  const wrong = await c.post('/api/auth/check-profile', { full_name: 'Rami Saad', phone: '0501212121', email: 'other@roster.example', agency_id: marina.id, invitation_id: rami.id });
+  assert.equal(wrong.data.error, 'INVITATION_EMAIL_MISMATCH');
+  assert.match(wrong.data.message, /r•••@roster\.example/);
+  const ok = await c.post('/api/auth/check-profile', { full_name: 'Rami Saad', phone: '0501212121', email: 'Rami.K@roster.example', agency_id: marina.id, invitation_id: rami.id });
+  assert.equal(ok.status, 200, JSON.stringify(ok.data));
+  assert.equal(ok.data.invitation_id, rami.id);
+  assert.equal((await c.get('/api/public/agencies/99999/roster')).data.error, 'AGENCY_NOT_FOUND');
+});

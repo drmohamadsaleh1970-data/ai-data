@@ -130,8 +130,8 @@ test('agency: sign-up → payment → owner approval → activation → invite a
   await invite.getByLabel('Email').fill('fresh.agent@journey.example');
   await invite.getByLabel('Role').selectOption('AGENT');
   await invite.getByLabel('Daily limit (records)').fill('2');
-  await invite.getByRole('button', { name: 'Invite' }).click();
-  await expect(director.getByText('Invitation recorded ✓')).toBeVisible();
+  await invite.getByRole('button', { name: 'Add agent' }).click();
+  await expect(director.getByText(/Agent added ✓/)).toBeVisible();
   await expect(director.getByText('2/day')).toBeVisible();
 
   // 6. Agent signs in, confirms the pre-filled profile, sees the personal limit.
@@ -204,18 +204,22 @@ test('agent in an agency: chooses the agency by name, asks to join, the director
   const agent = await aCtx.newPage(); const director = await dCtx.newPage();
   const p1 = watch(agent, 'agent'), p2 = watch(director, 'director');
 
-  // Sign-in page: "Agent in an agency" asks for the agency, picked from the list.
+  // Sign-in page: "Agent in an agency" → agency first → name not listed → details.
   await agent.goto('/#/signin');
   await agent.getByRole('button', { name: /Work under your agency/ }).click();
-  await agent.getByLabel('Full name').fill('Sami Nasser');
-  await agent.getByLabel('Mobile number').fill('055 333 4444');
-  await agent.getByLabel('Email').fill('fresh.joiner@journey.example');
   await agent.getByLabel('Your agency').fill('Nowhere Realty');
   await agent.getByRole('button', { name: 'Continue' }).click();
   await expect(agent.getByText(/No agency with that name/)).toBeVisible();
   await agent.getByLabel('Your agency').fill('Marina Crest Realty (TEST)');
   await agent.getByRole('button', { name: 'Continue' }).click();
+  await expect(agent.getByRole('heading', { name: 'Who are you?' })).toBeVisible();
+  await agent.getByRole('button', { name: /My name isn't listed/ }).click();
+  await agent.getByLabel('Full name').fill('Sami Nasser');
+  await agent.getByLabel('Mobile number').fill('055 333 4444');
+  await agent.getByLabel('Email').fill('fresh.joiner@journey.example');
+  await agent.getByRole('button', { name: 'Continue' }).click();
   await expect(agent.locator('.kv')).toContainText('Marina Crest Realty (TEST)');
+  await expect(agent.locator('.kv')).toContainText('approves your request');
   await agent.screenshot({ path: `${shots}/join-1-signin.png`, fullPage: true });
 
   // Google sign-in (test sign-in here), profile, then the join page.
@@ -247,4 +251,51 @@ test('agent in an agency: chooses the agency by name, asks to join, the director
   const problems = [...p1, ...p2];
   expect(problems, problems.join('\n')).toEqual([]);
   await aCtx.close(); await dCtx.close();
+});
+
+test('agent added by the agency picks their name on the sign-in page and joins without approval', async ({ browser }) => {
+  const dCtx = await browser.newContext(); const aCtx = await browser.newContext();
+  const director = await dCtx.newPage(); const agent = await aCtx.newPage();
+  const p1 = watch(director, 'director'), p2 = watch(agent, 'agent');
+
+  await signIn(director, 'director');
+  await director.goto('/#/team');
+  const add = director.locator('form[data-form=invite]');
+  await add.getByLabel('Full name').fill('Layla Haddad');
+  await add.getByLabel('Mobile number').fill('050 909 0909');
+  await add.getByLabel('Email').fill('fresh.joiner2@journey.example');
+  await add.getByLabel('Daily limit (records)').fill('4');
+  await add.getByRole('button', { name: 'Add agent' }).click();
+  await expect(director.getByText(/Agent added ✓/)).toBeVisible();
+
+  await agent.goto('/#/signin');
+  await agent.getByRole('button', { name: /Work under your agency/ }).click();
+  await agent.getByLabel('Your agency').fill('Marina Crest Realty (TEST)');
+  await agent.getByRole('button', { name: 'Continue' }).click();
+  // The list shows a short name and an email hint only.
+  const me = agent.getByRole('button', { name: /Layla H\./ });
+  await expect(me).toContainText('f•••@journey.example');
+  await expect(agent.getByText('050 909 0909')).toHaveCount(0);
+  await me.click();
+  await agent.getByLabel('Full name').fill('Layla Haddad');
+  await agent.getByLabel('Mobile number').fill('050 909 0909');
+  // A different email than the agency added is refused before Google opens.
+  await agent.getByLabel('Email').fill('someone.else@journey.example');
+  await agent.getByRole('button', { name: 'Continue' }).click();
+  await expect(agent.getByText(/added this name with the email f•••@journey.example/)).toBeVisible();
+  await agent.getByLabel('Email').fill('fresh.joiner2@journey.example');
+  await agent.getByRole('button', { name: 'Continue' }).click();
+  await expect(agent.locator('.kv')).toContainText('you join straight away');
+
+  await signIn(agent, 'fresh-joiner2');
+  await agent.goto('/#/overview');
+  await agent.reload();
+  await agent.getByRole('button', { name: 'Save and continue' }).click();
+  await expect(agent.getByRole('heading', { name: 'Overview' })).toBeVisible();
+  await expect(agent.getByText('Marina Crest Realty (TEST)').first()).toBeVisible();
+  await expect(agent.getByTitle('Your personal daily limit')).toContainText('you 0/4');
+
+  const problems = [...p1, ...p2];
+  expect(problems, problems.join('\n')).toEqual([]);
+  await dCtx.close(); await aCtx.close();
 });

@@ -478,3 +478,23 @@ export function decideJoinRequest(req, id, { approve, role = 'AGENT', daily_cap 
   audit({ actor: req.user.id, org: orgId, action: 'JOIN_APPROVED', target: `user:${j.user_id}`, meta: { role, daily_cap: cap } });
   return { status: 'APPROVED' };
 }
+
+// Agents the agency has already added (pending invitations), shown on the sign-in page so
+// an agent can pick their own name. Only a short name and an email hint are public; the
+// Google email must still match the invitation to join without approval.
+export function agencyRoster(orgId) {
+  const org = agencyById(orgId);
+  const rows = getDb().prepare('SELECT id, email, full_name FROM invitation WHERE org_id = ? AND accepted_at IS NULL AND expires_at > ? ORDER BY full_name, id LIMIT 200').all(org.id, iso());
+  return rows.map((r) => ({ id: r.id, name: shortName(r.full_name || r.email.split('@')[0]), email_hint: emailHint(r.email) }));
+}
+const shortName = (n) => { const p = String(n).trim().split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1][0].toUpperCase()}.` : p[0]; };
+const emailHint = (e) => { const [u, d] = String(e).split('@'); return `${u[0]}•••@${d}`; };
+
+// Picked their name: the email they typed must be the one the agency added.
+export function checkInvitationPick(orgId, invitationId, email) {
+  const inv = getDb().prepare('SELECT email FROM invitation WHERE id = ? AND org_id = ? AND accepted_at IS NULL AND expires_at > ?').get(Number(invitationId), Number(orgId), iso());
+  if (!inv) throw new HttpError(400, 'INVITATION_NOT_FOUND', 'That name is no longer on the list. Choose again, or press "My name isn\'t listed".');
+  if (inv.email.toLowerCase() !== String(email).toLowerCase()) {
+    throw new HttpError(400, 'INVITATION_EMAIL_MISMATCH', `Your agency added this name with the email ${emailHint(inv.email)}. Enter that email and sign in with that Google account, or press "My name isn't listed".`);
+  }
+}
