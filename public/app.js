@@ -1147,6 +1147,10 @@ const forms = {
 };
 
 document.addEventListener('click', (e) => {
+  // Clicking the menu item of the page you are on reloads its data (the hash does not
+  // change, so the router would otherwise do nothing).
+  const nav = e.target.closest('a[href^="#/"]');
+  if (nav && !nav.hasAttribute('data-act') && nav.getAttribute('href') === location.hash) { e.preventDefault(); render(); return; }
   const a = e.target.closest('[data-act]');
   if (a && actions[a.dataset.act]) {
     if (a.tagName !== 'INPUT') e.preventDefault();

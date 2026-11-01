@@ -162,8 +162,9 @@ test('agency: sign-up → payment → owner approval → activation → invite a
   await result.getByRole('link', { name: 'Open in CRM' }).first().click();
   await expect(agent.getByRole('heading', { name: 'CRM' })).toBeVisible();
 
-  // 8. Director sees the agent's usage on the Team page.
+  // 8. Director sees the agent's usage on the Team page (clicking the menu item refreshes it).
   await director.goto('/#/team');
+  await director.getByRole('link', { name: /Teams & Agents/ }).click();
   await expect(director.getByLabel('Daily limit for Omar Haddad')).toHaveValue('2');
   await expect(director.locator('form[data-form=member-cap]').filter({ has: director.getByLabel('Daily limit for Omar Haddad') })).toContainText('2 today');
   await director.screenshot({ path: `${shots}/agency-7-team.png`, fullPage: true });
