@@ -541,6 +541,10 @@ const ADDED_COLUMNS = [
   ['crm_lead', 'deal_value_aed', 'INTEGER'],          // expected deal value, for the pipeline forecast
   ['crm_lead', 'expected_close', 'TEXT'],             // YYYY-MM-DD
   ['crm_lead', 'tags', 'TEXT'],                       // comma separated, lower case
+  ['crm_contact', 'preferred_channel', 'TEXT'],      // WHATSAPP | CALL | EMAIL | SMS (how the client likes to be reached)
+  ['crm_contact', 'best_time', 'TEXT'],              // MORNING | AFTERNOON | EVENING | ANY
+  ['crm_contact', 'tone', 'TEXT'],                   // FORMAL | FRIENDLY
+  ['lead_activity', 'template_id', 'INTEGER'],       // message template used for this contact, if any
 ];
 
 function addColumns(conn, pg) {
