@@ -5,6 +5,7 @@ export const RTL = new Set(['ar']);
 const S = {
   // nav
   overview: ['Overview', 'نظرة عامة', 'Vue d’ensemble', 'Обзор', 'Genel bakış'],
+  guide: ['Guide', 'الدليل', 'Guide', 'Руководство', 'Rehber'],
   crm_dashboard: ['CRM dashboard', 'لوحة إدارة العملاء', 'Tableau de bord CRM', 'Панель CRM', 'CRM paneli'],
   crm_monitor: ['CRM monitor', 'مراقبة إدارة العملاء', 'Suivi CRM', 'Мониторинг CRM', 'CRM izleme'],
   investor_history: ['Investor History', 'سجل المستثمرين', 'Historique investisseurs', 'История инвесторов', 'Yatırımcı geçmişi'],
