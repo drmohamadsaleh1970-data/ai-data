@@ -514,6 +514,8 @@ const ADDED_COLUMNS = [
   ['invitation', 'full_name', 'TEXT'],
   ['invitation', 'phone', 'TEXT'],
   ['invitation', 'daily_cap', 'INTEGER'],
+  ['activation_magic_link', 'code_hash', 'TEXT'],     // 8-character activation code (hash)
+  ['activation_magic_link', 'code', 'TEXT'],          // shown to the bound customer until used
 ];
 
 function addColumns(conn, pg) {

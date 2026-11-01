@@ -1,6 +1,8 @@
 import { getDb, tx } from './db.js';
 import { config, paypalConfigured } from './config.js';
 import { HttpError, iso, now, randomToken, sha256, audit, notify } from './util.js';
+import { queueEmail } from './mail.js';
+import crypto from 'node:crypto';
 
 export const PUBLIC_PLANS = ['AGENCY_MONTHLY', 'AGENT_MONTHLY'];
 
@@ -181,12 +183,37 @@ function notifyOrgOwner(conn, orgId, type, body) {
 }
 
 // --- Cash / offline ------------------------------------------------------------------
-export function requestCash({ orgId, planCode, user, note }) {
+const orgName = (conn, orgId) => conn.prepare('SELECT name FROM organization WHERE id = ?').get(orgId)?.name || `Organization ${orgId}`;
+
+// Platform owners and finance admins see every payment waiting for confirmation.
+function alertApprovers(conn, { type, body, baseUrl = config.baseUrl }) {
+  const approvers = conn.prepare("SELECT id, email FROM platform_user WHERE platform_role IN ('PLATFORM_OWNER','PLATFORM_FINANCE_ADMIN')").all();
+  for (const a of approvers) {
+    conn.prepare('INSERT INTO notification (user_id, org_id, type, body, link, created_at) VALUES (?,?,?,?,?,?)').run(a.id, null, type, body, '#/owner/approvals', iso());
+    if (!String(a.email).includes('@')) continue;
+    queueEmail(conn, { userId: a.id, to: a.email, subject: 'AI-DATA: payment waiting for your confirmation', body: `${body}\n\nApprovals: ${baseUrl}/#/owner/approvals` });
+  }
+}
+
+// Activation codes: 8 characters without look-alikes (no 0/O, 1/I/L), shown as XXXX-XXXX.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function newActivationCode() {
+  const bytes = crypto.randomBytes(8);
+  const raw = [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+}
+export const normalizeCode = (code) => String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+export function requestCash({ orgId, planCode, user, note, baseUrl = config.baseUrl }) {
   const p = plan(planCode);
   const reference = 'AIH-' + randomToken(5).toUpperCase().replace(/[^A-Z0-9]/g, 'X').slice(0, 7);
   const id = Number(getDb().prepare(`INSERT INTO cash_payment_request (org_id, plan_code, amount_cents, currency, reference, status, requested_by, customer_note, created_at)
     VALUES (?,?,?,'AED',?,'PENDING_PAYMENT',?,?,?)`).run(orgId, planCode, p.price_usd_cents, reference, user.id, note?.slice(0, 500) ?? null, iso()).lastInsertRowid);
   audit({ actor: user.id, org: orgId, action: 'CASH_REQUEST_CREATED', target: `cash:${id}` });
+  alertApprovers(getDb(), {
+    baseUrl,
+    type: 'PAYMENT_TO_CONFIRM',
+    body: `New payment to confirm: ${orgName(getDb(), orgId)} · ${p.name} · AED ${(p.price_usd_cents / 100).toFixed(0)} · ref ${reference}. Open Approvals once the money is received.`,
+  });
   return getDb().prepare('SELECT * FROM cash_payment_request WHERE id = ?').get(id);
 }
 
@@ -213,23 +240,35 @@ export function verifyCash({ requestId, approver, amountCents, currency = 'AED',
     const link = issueMagicLink(conn, { orgId: req.org_id, userId: req.requested_by, subscriptionId: subId, baseUrl });
     conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target, meta_json) VALUES (?,?,?,?,?,?)')
       .run(ts, approver.id, req.org_id, 'CASH_VERIFIED', `cash:${req.id}`, JSON.stringify({ amountCents, channel, receiptNo, subscriptionId: subId }));
-    return { subscription_id: subId, magic_link_id: link.id, delivered_to: link.email, activation_link: link.url };
+    return { subscription_id: subId, magic_link_id: link.id, delivered_to: link.email, activation_link: link.url, activation_code: link.code, expires_at: link.expires_at };
   });
 }
 
-// No email service is connected yet, so the link goes back to the finance user (MFA
-// verified) to send by WhatsApp or email. Only its hash is stored.
+// Each confirmed payment gets a single-use activation link and an 8-character code, both
+// bound to the customer's Google account. The code reaches the customer automatically:
+// in-app (notification + their Billing page) and by email when an email service is set.
+// The link/code can also be sent by WhatsApp from the Approvals page.
 function issueMagicLink(conn, { orgId, userId, subscriptionId, baseUrl }) {
   const token = randomToken(32);
+  const code = newActivationCode();
   const ts = iso();
   const expires = new Date(now().getTime() + config.magicLinkTtlHours * 3_600_000).toISOString();
   conn.prepare('UPDATE activation_magic_link SET revoked_at = ? WHERE subscription_id = ? AND used_at IS NULL AND revoked_at IS NULL').run(ts, subscriptionId);
-  const id = Number(conn.prepare('INSERT INTO activation_magic_link (token_hash, org_id, user_id, subscription_id, expires_at, created_at) VALUES (?,?,?,?,?,?)')
-    .run(sha256(token), orgId, userId, subscriptionId, expires, ts).lastInsertRowid);
-  const user = conn.prepare('SELECT email FROM platform_user WHERE id = ?').get(userId);
-  conn.prepare('INSERT INTO audit_log (at, org_id, action, target) VALUES (?,?,?,?)').run(ts, orgId, 'MAGIC_LINK_ISSUED', `link:${id}`);
+  const id = Number(conn.prepare('INSERT INTO activation_magic_link (token_hash, code_hash, code, org_id, user_id, subscription_id, expires_at, created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(sha256(token), sha256(normalizeCode(code)), code, orgId, userId, subscriptionId, expires, ts).lastInsertRowid);
+  const user = conn.prepare('SELECT email, name FROM platform_user WHERE id = ?').get(userId);
+  const sub = conn.prepare('SELECT s.plan_code, p.name AS plan_name FROM subscription s JOIN subscription_plan p ON p.code = s.plan_code WHERE s.id = ?').get(subscriptionId);
   // Token travels in the URL fragment, which browsers never send to servers or in Referer.
-  return { id, email: user.email, expires_at: expires, url: `${baseUrl}/#/activate/${token}` };
+  const url = `${baseUrl}/#/activate/${token}`;
+  const until = new Date(expires).toLocaleString('en-GB', { timeZone: 'Asia/Dubai', dateStyle: 'medium', timeStyle: 'short' });
+  conn.prepare('INSERT INTO notification (user_id, org_id, type, body, link, created_at) VALUES (?,?,?,?,?,?)')
+    .run(userId, orgId, 'ACTIVATION_CODE', `Payment confirmed ✓ Your activation code is ${code} (${sub.plan_name}). Open Billing and press Activate. Valid until ${until} (Dubai).`, '#/billing', ts);
+  queueEmail(conn, {
+    userId, to: user.email, subject: `Your AI-DATA activation code: ${code}`,
+    body: `Hello ${user.name},\n\nYour payment for ${sub.plan_name} is confirmed.\n\nActivation code: ${code}\n\nSign in at ${baseUrl} with Google as ${user.email}, open Billing and enter the code, or open this link:\n${url}\n\nThe code works once, only for your account, until ${until} (Dubai time).\n\nAI-DATA`,
+  });
+  conn.prepare('INSERT INTO audit_log (at, org_id, action, target) VALUES (?,?,?,?)').run(ts, orgId, 'MAGIC_LINK_ISSUED', `link:${id}`);
+  return { id, email: user.email, expires_at: expires, url, code };
 }
 
 export function reissueMagicLink({ subscriptionId, actor, baseUrl = config.baseUrl }) {
@@ -239,13 +278,24 @@ export function reissueMagicLink({ subscriptionId, actor, baseUrl = config.baseU
     const prev = conn.prepare('SELECT user_id FROM activation_magic_link WHERE subscription_id = ? ORDER BY id DESC LIMIT 1').get(sub.id);
     const link = issueMagicLink(conn, { orgId: sub.org_id, userId: prev.user_id, subscriptionId: sub.id, baseUrl });
     conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target) VALUES (?,?,?,?,?)').run(iso(), actor.id, sub.org_id, 'MAGIC_LINK_REISSUED', `link:${link.id}`);
-    return { magic_link_id: link.id, delivered_to: link.email, activation_link: link.url };
+    return { magic_link_id: link.id, delivered_to: link.email, activation_link: link.url, activation_code: link.code, expires_at: link.expires_at };
   });
 }
 
 export function activateMagicLink({ token, user }) {
+  return activateLink({ user, find: (conn) => conn.prepare('SELECT * FROM activation_magic_link WHERE token_hash = ?').get(sha256(String(token || ''))) });
+}
+
+// The code typed (or pre-filled) on the Billing page. Only the customer's own codes match.
+export function activateCode({ code, user }) {
+  const norm = normalizeCode(code);
+  if (norm.length !== 8) return { error: 'CODE_INVALID' };
+  return activateLink({ user, find: (conn) => conn.prepare('SELECT * FROM activation_magic_link WHERE code_hash = ? ORDER BY id DESC LIMIT 1').get(sha256(norm)) });
+}
+
+function activateLink({ user, find }) {
   return tx((conn) => {
-    const link = conn.prepare('SELECT * FROM activation_magic_link WHERE token_hash = ?').get(sha256(String(token || '')));
+    const link = find(conn);
     const fail = (code) => {
       conn.prepare('INSERT INTO audit_log (at, actor_user_id, action, target) VALUES (?,?,?,?)').run(iso(), user.id, 'MAGIC_LINK_REJECTED', code);
       return { error: code };
@@ -276,9 +326,18 @@ export function terminateSubscription({ subscriptionId, actor, reason }) {
   notify(getDb().prepare('SELECT owner_user_id FROM organization WHERE id = ?').get(sub.org_id).owner_user_id, sub.org_id, 'SUBSCRIPTION_TERMINATED', 'Your subscription was terminated by AI-DATA finance.', '#/billing');
 }
 
-export function billingView(orgId) {
+// Unused, unexpired activation codes of this user in this organization.
+export function pendingActivation(orgId, userId) {
+  return getDb().prepare(`SELECT l.code, l.expires_at, s.plan_code, p.name AS plan_name FROM activation_magic_link l
+      JOIN subscription s ON s.id = l.subscription_id JOIN subscription_plan p ON p.code = s.plan_code
+    WHERE l.org_id = ? AND l.user_id = ? AND l.used_at IS NULL AND l.revoked_at IS NULL AND l.expires_at > ? AND s.status = 'AWAITING_ACTIVATION'
+    ORDER BY l.id DESC LIMIT 1`).get(orgId, userId, iso()) || null;
+}
+
+export function billingView(orgId, userId) {
   const db = getDb();
   return {
+    activation: userId ? pendingActivation(orgId, userId) : null,
     subscriptions: db.prepare('SELECT s.id, s.plan_code, s.status, s.provider, s.price_snapshot_cents, s.current_period_start, s.current_period_end, s.effective_at, s.created_at FROM subscription s WHERE org_id = ? ORDER BY id DESC').all(orgId),
     payments: db.prepare('SELECT id, provider, kind, amount_cents, currency, status, receipt_no, paid_at FROM payment WHERE org_id = ? ORDER BY paid_at DESC').all(orgId),
     cash_requests: db.prepare('SELECT id, plan_code, amount_cents, currency, reference, status, created_at FROM cash_payment_request WHERE org_id = ? ORDER BY id DESC').all(orgId),

@@ -156,6 +156,19 @@ window.addEventListener('hashchange', render);
 // ---------------------------------------------------------------------------------
 const logo = (dark) => `<a class="logo" href="#/"><span class="logo-mark">A</span><span>AI-DATA<small${dark ? '' : ''}>Investor Intelligence</small></span></a>`;
 
+// One clear call to action at the top of every page while something needs doing.
+function actionBanner(name, parts) {
+  const m = state.me;
+  if (m.activation_pending && name !== 'billing') {
+    return `<a class="banner ok action-banner" href="#/billing" style="display:flex;gap:10px;align-items:center;margin-bottom:16px;text-decoration:none"><b>✓ Payment confirmed.</b> Your activation code is ready — activate your data access now →</a>`;
+  }
+  const w = m.approvals_waiting;
+  if (w?.to_confirm && !(name === 'owner' && ['approvals', 'finance'].includes(parts[1]))) {
+    return `<a class="banner warn action-banner" href="#/owner/approvals" style="display:flex;gap:10px;align-items:center;margin-bottom:16px;text-decoration:none"><b>${w.to_confirm} payment${w.to_confirm > 1 ? 's' : ''} waiting for your confirmation.</b> Open Payment approvals →</a>`;
+  }
+  return '';
+}
+
 function shell(name, parts, content) {
   const link = (href, key, ico, active) => `<a class="nav-link ${active ? 'active' : ''}" href="${href}"><span class="ico">${ico}</span>${esc(t(key))}</a>`;
   const m = state.me;
@@ -177,8 +190,10 @@ function shell(name, parts, content) {
   if (isFinance()) {
     const sub = parts[1] || 'dashboard';
     nav += `<div class="nav-group">${t('owner_console')}</div>`;
+    const waiting = (m.approvals_waiting?.to_confirm || 0) + (m.approvals_waiting?.awaiting_activation || 0);
+    const approvalsActive = name === 'owner' && (sub === 'approvals' || sub === 'finance');
+    nav += `<a class="nav-link ${approvalsActive ? 'active' : ''}" href="#/owner/approvals"><span class="ico">✓</span>Payment approvals${waiting ? ` <span class="badge ${m.approvals_waiting.to_confirm ? 'bad' : 'gold'}" style="margin-inline-start:auto" aria-label="${waiting} waiting">${waiting}</span>` : ''}</a>`;
     nav += link('#/owner', 'owner_dashboard', '◆', name === 'owner' && sub === 'dashboard');
-    nav += link('#/owner/finance', 'finance', '$', name === 'owner' && sub === 'finance');
     if (isOwner()) {
       nav += link('#/owner/source', 'data_source', '⇩', name === 'owner' && sub === 'source');
       nav += link('#/owner/data', 'master_data', '⛁', name === 'owner' && sub === 'data');
@@ -208,7 +223,7 @@ function shell(name, parts, content) {
         <button class="btn ghost bell" data-act="notifs" aria-label="${t('notifications')}">🔔${m.unread_notifications ? `<span class="count">${m.unread_notifications}</span>` : ''}</button>
         <button class="btn sm" data-act="logout">${t('sign_out')}</button>
       </header>
-      <main class="page">${content}</main>
+      <main class="page">${actionBanner(name, parts)}${content}</main>
     </div>
   </div>`;
 }
@@ -399,6 +414,15 @@ async function viewOnboarding() {
     <div><button class="btn gold">${t('continue')}</button></div>
   </form>`;
 }
+
+const ACTIVATION_ERRORS = {
+  LINK_INVALID: 'That activation code is not valid. Check the 8 characters and try again.',
+  CODE_INVALID: 'Activation codes have 8 characters, like ABCD-2345.',
+  LINK_ALREADY_USED: 'This code was already used — your subscription should be active.',
+  LINK_REVOKED: 'A newer code was sent to you. Use the latest code (see your notifications or Billing page).',
+  LINK_EXPIRED: 'This code has expired. Ask AI-DATA for a new code.',
+  LINK_WRONG_ACCOUNT: 'This code belongs to a different account. Sign in with the Google account that requested the payment.',
+};
 
 async function viewActivate([token]) {
   return `<div class="page-head"><h1>${t('activate_title')}</h1></div>
@@ -744,7 +768,16 @@ async function viewBilling(_p, query) {
   const e = state.me.entitlements.cold;
   const manage = can('billing.manage');
   const pre = query.plan;
+  const act = b.activation;
+  const waiting = b.cash_requests.filter((c) => c.status === 'PENDING_PAYMENT');
   return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('billing')}</h1></div></div>
+  ${act ? `<form class="card grid" data-form="activate-code" style="border:2px solid var(--ok);margin-bottom:16px;gap:12px">
+      <h3 style="margin:0">✓ Payment confirmed — activate ${esc(act.plan_name)}</h3>
+      <p class="small muted" style="margin:0">Your activation code was sent automatically. It works once, only for your account, until ${fmtDT(act.expires_at)}.</p>
+      <div class="row" style="gap:10px;flex-wrap:wrap"><input type="text" name="code" value="${esc(act.code)}" aria-label="Activation code" class="mono" style="font-size:22px;letter-spacing:3px;max-width:220px;text-transform:uppercase"><button class="btn gold">Activate now</button></div>
+    </form>` : ''}
+  ${!act && waiting.length ? `<div class="banner cold" style="margin-bottom:16px">⏳ Waiting for AI-DATA to confirm your payment (ref <b class="mono">${esc(waiting[0].reference)}</b>). As soon as it is confirmed you will get an activation code here automatically.</div>` : ''}
+  ${!act && !e.active ? `<form class="card row" data-form="activate-code" style="gap:10px;margin-bottom:16px;flex-wrap:wrap"><span class="small"><b>Have an activation code?</b></span><input type="text" name="code" placeholder="XXXX-XXXX" required aria-label="Activation code" class="mono" style="max-width:180px;text-transform:uppercase"><button class="btn">Activate</button></form>` : ''}
   <div class="grid g2" style="align-items:start">
     <div class="card"><h3>Current Cold subscription</h3>
       ${e.active ? `<div class="kv"><span class="k">${t('plan')}</span><span class="v">${esc(e.plan_name)}</span><span class="k">${t('status')}</span><span class="v"><span class="badge ok">Active</span></span><span class="k">${t('renews')}</span><span class="v">${fmtDate(e.period_end)}</span><span class="k">Method</span><span class="v">${esc(human(e.provider))}</span></div>`
@@ -756,7 +789,7 @@ async function viewBilling(_p, query) {
         <button class="btn gold" data-act="pay-cash" data-plan="${p.code}">${t('pay_cash')}</button></div></div>`).join('') : `<div class="card muted">Only the account owner or director can change the subscription.</div>`}</div>
   </div>
   ${b.cash_requests.length ? `<div class="card" style="margin-top:16px"><h3>Offline payment requests</h3><div class="table-wrap"><table><thead><tr><th>Reference</th><th>${t('plan')}</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>${t('date')}</th></tr></thead><tbody>${b.cash_requests.map((c) => `<tr><td class="mono"><b>${esc(c.reference)}</b></td><td>${esc(human(c.plan_code))}</td><td class="num">${fmtMoney(c.amount_cents)}</td><td><span class="badge ${c.status === 'VERIFIED' ? 'ok' : c.status === 'REJECTED' ? 'bad' : 'warn'}">${esc(human(c.status))}</span></td><td>${fmtDT(c.created_at)}</td></tr>`).join('')}</tbody></table></div>
-    <p class="small muted">Pay at the AI-DATA office or by bank transfer quoting the reference. Access is activated only after finance verifies receipt; AI-DATA finance then sends you a single-use activation link by WhatsApp or email.</p></div>` : ''}
+    <p class="small muted">Pay at the AI-DATA office or by bank transfer quoting the reference. Access starts after AI-DATA confirms the money has arrived; you then receive an activation code automatically on this page and in your notifications.</p></div>` : ''}
   <div class="card" style="margin-top:16px"><h3>${t('payments')}</h3><div class="table-wrap"><table><thead><tr><th>${t('date')}</th><th>Method</th><th>Product</th><th class="num">${t('amount')}</th><th>${t('status')}</th><th>Receipt</th></tr></thead><tbody>${b.payments.map((p) => `<tr><td>${fmtDate(p.paid_at)}</td><td>${esc(human(p.provider))}</td><td>${esc(human(p.kind))}</td><td class="num">${fmtMoney(p.amount_cents)}</td><td><span class="badge ${p.status === 'COMPLETED' ? 'ok' : 'bad'}">${esc(human(p.status))}</span></td><td class="mono">${esc(p.receipt_no || '—')}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">—</td></tr>'}</tbody></table></div></div>
 `;
 }
@@ -784,7 +817,7 @@ async function viewSettings() {
 // Owner console
 // ---------------------------------------------------------------------------------
 async function viewOwner([sub = 'dashboard']) {
-  if (sub === 'finance') return ownerFinance();
+  if (sub === 'finance' || sub === 'approvals') return ownerApprovals();
   if (!isOwner() && sub !== 'dashboard') return '<div class="banner bad">Platform owner only.</div>';
   if (sub === 'source') return ownerSource();
   if (sub === 'data') return ownerData();
@@ -800,7 +833,7 @@ async function viewOwner([sub = 'dashboard']) {
     <div class="card"><div class="stat hot"><span class="l">Hot revenue this month (separate)</span><span class="v">${fmtMoney(d.hot_revenue_this_month.cents)}</span></div><p class="small muted">${d.hot_revenue_this_month.leads} leads billed</p></div>
   </div>
   <div class="grid g3" style="margin-top:16px">
-    <div class="card"><div class="stat"><span class="l">Pending cash</span><span class="v">${d.pending_cash.length}</span></div><a href="#/owner/finance" class="small">${t('finance')} →</a></div>
+    <div class="card"><div class="stat"><span class="l">Payments to confirm</span><span class="v" style="${d.pending_cash.length ? 'color:var(--bad)' : ''}">${d.pending_cash.length}</span></div><a href="#/owner/approvals" class="small">Payment approvals →</a></div>
     <div class="card"><div class="stat"><span class="l">Overdue / suspended</span><span class="v" style="color:var(--bad)">${d.overdue.length}</span></div></div>
     <div class="card"><div class="stat"><span class="l">Investor records</span><span class="v">${fmtNum(d.data.investors)}</span></div><p class="small muted">${fmtNum(d.data.transactions)} transactions · ${fmtNum(d.data.approved)} approved · ${fmtNum(d.data.pending)} pending review · ${fmtNum(d.data.suppressed)} suppressed</p></div>
   </div>
@@ -808,29 +841,44 @@ async function viewOwner([sub = 'dashboard']) {
   <div class="card" style="margin-top:16px"><h3>Cold usage by day</h3><div class="table-wrap"><table><tbody>${d.cold_usage_today.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.local_day)}</td><td class="num">${u.committed_used} / ${u.plan_limit}</td></tr>`).join('') || '<tr><td class="empty">—</td></tr>'}</tbody></table></div></div>`;
 }
 
-async function ownerFinance() {
-  const d = await GET('/api/owner/dashboard');
-  return `<div class="page-head"><div><div class="kicker">${t('owner_console')}</div><h1>${t('finance')}</h1></div></div>
-  <div class="banner warn" style="margin-bottom:16px">Verify only money actually received. A customer's screenshot is a claim, not a receipt. Approvals require MFA and are audited.</div>
-  <div class="card"><h3>Pending cash / offline payments</h3>${d.pending_cash.map((c) => `<form class="grid" data-form="verify-cash" data-id="${c.id}" style="border-top:1px solid var(--line);padding:12px 0;gap:10px">
-      <div class="row"><b class="mono">${esc(c.reference)}</b><span>${esc(c.org_name)}</span><span class="badge">${esc(human(c.plan_code))}</span><span class="badge gold">${fmtMoney(c.amount_cents)}</span><span class="small muted">${esc(c.requested_by_email)} · ${fmtDT(c.created_at)}</span></div>
-      ${c.customer_note ? `<div class="small muted">“${esc(c.customer_note)}”</div>` : ''}
-      <div class="grid g4" style="gap:8px"><label class="field">Amount received (AED)<input type="number" name="amount_aed" step="0.01" min="0" required></label><label class="field">Paid on<input type="date" name="paid_on" required></label>
-        <label class="field">Channel<select name="channel"><option value="CASH_OFFICE">Cash at office</option><option value="BANK_TRANSFER">Bank transfer</option><option value="CHEQUE">Cheque</option></select></label><label class="field">Receipt no.<input type="text" name="receipt_no" required maxlength="60"></label></div>
-      <div class="row"><button class="btn gold">Verify receipt & create activation link</button><button type="button" class="btn ghost" data-act="reject-cash" data-id="${c.id}">Reject</button></div></form>`).join('') || '<div class="empty">No pending offline payments.</div>'}</div>
-  <div class="card" style="margin-top:16px"><h3>Awaiting activation</h3>${d.awaiting_activation.map((s) => `<div class="row" style="border-top:1px solid var(--line);padding:8px 0"><span>${esc(s.org_name)} · ${esc(human(s.plan_code))} · ${fmtDT(s.created_at)}</span><div class="spacer"></div><button class="btn sm" data-act="reissue" data-id="${s.id}">Reissue link</button></div>`).join('') || '<div class="muted">—</div>'}</div>`;
+async function ownerApprovals() {
+  const d = await GET('/api/owner/approvals');
+  const step = (n, title, text) => `<div class="card" style="padding:14px 16px"><div class="row" style="gap:10px;align-items:flex-start"><span class="badge gold">${n}</span><div><b>${title}</b><div class="small muted">${text}</div></div></div></div>`;
+  const who = (c) => `${esc(c.requested_by_name || c.requested_by_email)}<br><span class="small muted">${esc(c.requested_by_email)}${c.requested_by_phone ? ` · <span class="mono">${esc(c.requested_by_phone)}</span>` : ''}</span>`;
+  return `<div class="page-head"><div><div class="kicker">${t('owner_console')}</div><h1>Payment approvals</h1><p class="muted" style="margin:4px 0 0">Confirm payments you have received. The customer then gets an activation code automatically.</p></div>
+    <div class="spacer"></div><span class="badge ${d.counts.to_confirm ? 'bad' : 'ok'}">${d.counts.to_confirm} to confirm</span><span class="badge gold">${d.counts.awaiting_activation} waiting for customer</span></div>
+  <div class="grid g3" style="margin-bottom:16px">
+    ${step(1, 'Customer pays', 'They choose Cash / bank transfer on their Billing page and get a payment reference (AIH-…). It appears below.')}
+    ${step(2, 'You confirm the money arrived', 'Check your bank or cash receipt, enter amount, date, channel and receipt number, then press <b>Confirm payment</b>.')}
+    ${step(3, 'Customer activates', `They receive an 8-character activation code automatically: in the app (notification + Billing page)${d.email_configured ? ' and by email' : ''}. One click and their data access starts.`)}
+  </div>
+  ${d.email_configured ? '' : '<div class="banner cold" style="margin-bottom:16px">Email sending is not set up, so codes are delivered inside the app only (customers see them as soon as they sign in). You can also send a code by WhatsApp after confirming.</div>'}
+  <div class="card"><h3>1 · Payments to confirm (${d.pending_cash.length})</h3>
+    <p class="small muted" style="margin-top:0">Confirm only money actually received. A customer's screenshot is a claim, not a receipt. Every confirmation is recorded in the audit log.</p>
+    ${d.pending_cash.map((c) => `<form class="grid" data-form="verify-cash" data-id="${c.id}" style="border-top:1px solid var(--line);padding:14px 0;gap:10px">
+      <div class="row" style="gap:12px;flex-wrap:wrap"><b class="mono" style="font-size:16px">${esc(c.reference)}</b><span><b>${esc(c.org_name)}</b></span><span class="badge">${esc(human(c.plan_code))}</span><span class="badge gold">${fmtMoney(c.amount_cents)}</span><span class="small muted">requested ${fmtDT(c.created_at)}</span></div>
+      <div class="small">${who(c)}</div>
+      ${c.customer_note ? `<div class="small muted">Customer note: “${esc(c.customer_note)}”</div>` : ''}
+      <div class="grid g4" style="gap:8px"><label class="field">Amount received (AED)<input type="number" name="amount_aed" step="0.01" min="0" required value="${(c.amount_cents / 100).toFixed(0)}"></label><label class="field">Paid on<input type="date" name="paid_on" required value="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="field">Channel<select name="channel"><option value="BANK_TRANSFER">Bank transfer</option><option value="CASH_OFFICE">Cash at office</option><option value="CHEQUE">Cheque</option></select></label><label class="field">Receipt / transfer no.<input type="text" name="receipt_no" required maxlength="60"></label></div>
+      <div class="row"><button class="btn gold">✓ Confirm payment & send activation code</button><button type="button" class="btn ghost" data-act="reject-cash" data-id="${c.id}">Reject</button></div></form>`).join('') || '<div class="empty">Nothing to confirm right now.</div>'}</div>
+  <div class="card" style="margin-top:16px"><h3>2 · Confirmed, waiting for the customer to activate (${d.awaiting_activation.length})</h3>
+    <p class="small muted" style="margin-top:0">The customer already has their code. If it expired or they lost it, send a new one (the old code stops working).</p>
+    ${d.awaiting_activation.map((s) => `<div class="row" style="border-top:1px solid var(--line);padding:10px 0;gap:12px;flex-wrap:wrap"><span><b>${esc(s.org_name)}</b> · ${esc(human(s.plan_code))}<br><span class="small muted">${esc(s.customer_email || '')}${s.customer_phone ? ` · <span class="mono">${esc(s.customer_phone)}</span>` : ''} · confirmed ${fmtDT(s.created_at)} · ${s.code_expires_at ? `code valid until ${fmtDT(s.code_expires_at)}` : '<b style="color:var(--bad)">code expired</b>'}</span></span><div class="spacer"></div><button class="btn sm" data-act="reissue" data-id="${s.id}">Send new code</button></div>`).join('') || '<div class="empty">No one is waiting.</div>'}</div>`;
 }
 
-// No email service yet: finance sends the single-use link by WhatsApp or email.
+// After confirming: the code has already reached the customer in the app (and by email
+// when configured). WhatsApp is offered as an extra channel.
 function showActivationLink(r, reissued = false) {
-  const text = `Your AI-DATA payment is verified. Sign in with Google as ${r.delivered_to} and open this single-use link to activate your subscription: ${r.activation_link}`;
-  openModal(`<h2>${reissued ? 'New activation link' : 'Payment verified ✓'}</h2>
-    <p class="small muted">Send this single-use link to <b>${esc(r.delivered_to)}</b>. It only works for that Google account${reissued ? '; the previous link no longer works' : ''}.</p>
-    <div class="code" id="act-link">${esc(r.activation_link)}</div>
-    <div class="row"><button class="btn primary" data-act="copy-link" data-text="${esc(r.activation_link)}">Copy link</button>
-      <a class="btn" target="_blank" rel="noopener noreferrer" href="https://wa.me/?text=${encodeURIComponent(text)}">Send by WhatsApp</a>
-      <a class="btn" href="mailto:${esc(r.delivered_to)}?subject=${encodeURIComponent('Activate your AI-DATA subscription')}&body=${encodeURIComponent(text)}">Send by email</a>
-      <button class="btn ghost" data-act="close-refresh">${t('close')}</button></div>`);
+  const text = `Your AI-DATA payment is confirmed. Activation code: ${r.activation_code}. Sign in with Google as ${r.delivered_to}, open Billing and press Activate, or open this link: ${r.activation_link}`;
+  openModal(`<h2>${reissued ? 'New activation code sent' : 'Payment confirmed ✓'}</h2>
+    <p>Activation code for <b>${esc(r.delivered_to)}</b>:</p>
+    <div class="code" style="font-size:28px;letter-spacing:4px;text-align:center" id="act-link">${esc(r.activation_code)}</div>
+    <div class="banner ok">Delivered automatically: in-app notification and on the customer's Billing page${r.emailed ? ', and by email' : ''}.${r.email_configured ? '' : ' (Email is not set up yet.)'}${reissued ? ' The previous code no longer works.' : ''}</div>
+    <p class="small muted">The code works once, only for that Google account, until ${fmtDT(r.expires_at)}.</p>
+    <div class="row"><a class="btn" target="_blank" rel="noopener noreferrer" href="https://wa.me/?text=${encodeURIComponent(text)}">Also send by WhatsApp</a>
+      <button class="btn" data-act="copy-link" data-text="${esc(text)}">Copy message</button>
+      <button class="btn primary" data-act="close-refresh">${t('close')}</button></div>`);
 }
 
 async function ownerData() {
@@ -970,7 +1018,7 @@ const actions = {
   },
   'notifs-read': async () => { await POST('/api/me/notifications/read'); render(); },
   activate: async (el) => {
-    try { await POST('/api/billing/activate', { token: el.dataset.token }); toast('Subscription activated ✓'); go('#/overview'); } catch (e) { toast(errMsg(e), true); }
+    try { await POST('/api/billing/activate', { token: el.dataset.token }); toast('Subscription activated ✓'); go('#/overview'); } catch (e) { toast(ACTIVATION_ERRORS[e.data?.error] || errMsg(e), true); }
   },
   'ih-pick': (el) => { const id = Number(el.dataset.id); el.checked ? state.ih.selected.add(id) : state.ih.selected.delete(id); el.closest('tr').classList.toggle('sel', el.checked); updateBasket(); },
   'ih-page': (el) => { for (const r of state.ih.results) if (!r.acquired && !r.blocked_reason) el.checked ? state.ih.selected.add(r.id) : state.ih.selected.delete(r.id); render(); },
@@ -991,7 +1039,7 @@ const actions = {
   'reject-cash': async (el) => { if (confirm('Reject this payment request?')) { await POST(`/api/owner/cash/${el.dataset.id}/reject`); render(); } },
   reissue: async (el) => { try { showActivationLink(await withMfa(() => POST(`/api/owner/subscriptions/${el.dataset.id}/reissue-link`)), true); } catch (e) { toast(errMsg(e), true); } },
   'copy-link': async (el) => {
-    try { await navigator.clipboard.writeText(el.dataset.text); toast('Link copied ✓'); } catch { window.getSelection().selectAllChildren(document.getElementById('act-link')); toast('Press Ctrl+C to copy'); }
+    try { await navigator.clipboard.writeText(el.dataset.text); toast('Copied ✓'); } catch { window.getSelection().selectAllChildren(document.getElementById('act-link')); toast('Press Ctrl+C to copy'); }
   },
   'owner-more': async () => { const o = state.owner; const r = await POST('/api/owner/cold/search', { filter: o.filter, cursor: o.cursor, limit: 50 }); o.results.push(...r.results); o.cursor = r.next_cursor; render(); },
   'owner-export': async () => {
@@ -1076,6 +1124,14 @@ const forms = {
   invite: async (f) => {
     await POST('/api/org/invitations', { full_name: f.full_name.value, phone: f.phone.value || undefined, email: f.email.value, role: f.role.value, daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
     toast('Invitation recorded ✓'); render();
+  },
+  'activate-code': async (f) => {
+    try {
+      await POST('/api/billing/activate', { code: f.code.value });
+      await loadMe();
+      toast('Subscription activated ✓ Your data access is live.');
+      go('#/overview');
+    } catch (e) { toast(ACTIVATION_ERRORS[e.data?.error] || errMsg(e), true); }
   },
   'verify-cash': async (f) => {
     const r = await withMfa(() => POST(`/api/owner/cash/${f.dataset.id}/verify`, { amount_aed: Number(f.amount_aed.value), paid_on: f.paid_on.value, channel: f.channel.value, receipt_no: f.receipt_no.value }));
