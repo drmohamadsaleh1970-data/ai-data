@@ -1195,7 +1195,12 @@ const actions = {
     run: (confirm) => POST('/api/owner/investors/delete-all', { confirm }) }),
   'signup-edit': () => { setSignupProfile(null); state.signinReturning = false; render(); },
   'signup-agency-change': () => { state.signupAgency = null; state.signupPick = null; render(); },
-  'signup-pick': (el) => { state.signupPick = el.dataset.id; render(); },
+  'signup-pick': (el) => {
+    // Re-choosing the selected option must not redraw the page (it would clear typed details).
+    if (el.getAttribute('aria-pressed') === 'true') return;
+    state.signupPick = el.dataset.id;
+    render();
+  },
   'signup-returning': () => { state.signinReturning = true; render(); },
   'signup-new': () => { state.signinReturning = false; render(); },
   'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
