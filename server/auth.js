@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { getDb } from './db.js';
-import { HttpError, iso, now, randomToken, sha256, audit, verifyTotp } from './util.js';
+import { HttpError, iso, now, randomToken, sha256, audit, verifyTotp, requireMobile, cleanName, cleanEmail } from './util.js';
 import { config } from './config.js';
 
 const SESSION_COOKIE = 'aih_sid';
@@ -138,7 +138,8 @@ export function upsertGoogleUser({ sub, email, name }) {
   const db = getDb();
   const existing = db.prepare('SELECT * FROM platform_user WHERE google_sub = ?').get(sub);
   if (existing) {
-    db.prepare('UPDATE platform_user SET email = ?, name = ? WHERE id = ?').run(email, name, existing.id);
+    // A name the person confirmed on sign-up wins over the Google display name.
+    db.prepare('UPDATE platform_user SET email = ?, name = CASE WHEN profile_completed_at IS NULL THEN ? ELSE name END WHERE id = ?').run(email, name, existing.id);
     return existing.id;
   }
   const ownerEmail = config.ownerEmail;
@@ -151,6 +152,20 @@ export function upsertGoogleUser({ sub, email, name }) {
     return pending.id;
   }
   return Number(db.prepare('INSERT INTO platform_user (google_sub, email, name, created_at) VALUES (?,?,?,?)').run(sub, email, name, iso()).lastInsertRowid);
+}
+
+// Name and mobile entered on the sign-in page (or later on the profile page).
+export function saveProfile(userId, { full_name, phone }) {
+  const name = cleanName(full_name);
+  const mobile = requireMobile(phone);
+  getDb().prepare('UPDATE platform_user SET name = ?, phone = ?, profile_completed_at = COALESCE(profile_completed_at, ?) WHERE id = ?').run(name, mobile, iso(), userId);
+  audit({ actor: userId, action: 'PROFILE_SAVED' });
+  return { name, phone: mobile };
+}
+
+// The sign-in form is checked before Google opens, so a typo shows up right away.
+export function checkProfile({ full_name, phone, email }) {
+  return { full_name: cleanName(full_name), phone: requireMobile(phone), email: cleanEmail(email) };
 }
 
 export { readCookie, SESSION_COOKIE };

@@ -191,13 +191,28 @@ function classify(conn, orgId, rows) {
   return out;
 }
 
-export function estimate({ orgId, selection }) {
+// A member's own daily cap inside the account's shared pool (set by the agency director).
+// The account limit (999 Agency / 99 Agent) is always the outer limit.
+export function userQuota(orgId, userId, conn = getDb(), day = dubaiDay()) {
+  const m = conn.prepare("SELECT daily_cap FROM membership WHERE org_id = ? AND user_id = ? AND status = 'ACTIVE'").get(orgId, userId);
+  const used = conn.prepare('SELECT COALESCE(SUM(delta),0) AS n FROM quota_ledger WHERE org_id = ? AND local_day = ? AND user_id = ?').get(orgId, day, userId).n;
+  const cap = m?.daily_cap ?? null;
+  return { cap, used, remaining: cap == null ? null : Math.max(0, cap - used) };
+}
+
+// What this user can still transfer today: the smaller of the shared pool and their cap.
+function allowanceFor(quota, mine) {
+  return mine.remaining == null ? quota.remaining : Math.min(quota.remaining, mine.remaining);
+}
+
+export function estimate({ orgId, userId, selection }) {
   const db = getDb();
   const sub = activeSubscription(orgId);
   const { requested, rows } = resolveSelection(db, selection);
   const c = classify(db, orgId, rows);
   const quota = sub ? quotaAccount(orgId, sub) : null;
-  const remaining = quota?.remaining ?? 0;
+  const mine = userId ? userQuota(orgId, userId) : { cap: null, used: 0, remaining: null };
+  const remaining = quota ? allowanceFor(quota, mine) : 0;
   return {
     entitled: !!sub,
     selected: requested,
@@ -208,7 +223,7 @@ export function estimate({ orgId, selection }) {
     blocked: c.blocked.length,
     blocked_reasons: tally(c.blocked.map((b) => b.reason)),
     deliverable_now: sub ? Math.min(c.newRecords.length, remaining) : 0,
-    quota: quota && { day: quota.local_day, limit: quota.plan_limit, used: quota.committed_used, remaining, resets_at: quota.resets_at, timezone: quota.timezone },
+    quota: quota && { day: quota.local_day, limit: quota.plan_limit, used: quota.committed_used, remaining, account_remaining: quota.remaining, resets_at: quota.resets_at, timezone: quota.timezone, my_cap: mine.cap, my_used: mine.used },
   };
 }
 
@@ -249,13 +264,18 @@ export function transfer({ membership, selection, idempotencyKey, allowPartial =
     const { requested, rows } = resolveSelection(conn, selection);
     const c = classify(conn, orgId, rows);
     const quota = quotaAccount(orgId, sub, conn);
-    if (c.newRecords.length > quota.remaining && !allowPartial) {
-      throw new HttpError(409, 'INSUFFICIENT_QUOTA', 'Not enough Cold allowance remaining today. Confirm a partial transfer or reduce the selection.', {
-        new_chargeable: c.newRecords.length, remaining: quota.remaining, resets_at: quota.resets_at,
+    const mine = userQuota(orgId, userId, conn, quota.local_day);
+    const allowance = allowanceFor(quota, mine);
+    const capLimited = allowance < quota.remaining;
+    if (c.newRecords.length > allowance && !allowPartial) {
+      throw new HttpError(409, capLimited ? 'USER_DAILY_CAP' : 'INSUFFICIENT_QUOTA', capLimited
+        ? `Your personal daily limit is ${mine.cap} records (${mine.remaining} left today). Ask your agency director to raise it, or reduce the selection.`
+        : 'Not enough Cold allowance remaining today. Confirm a partial transfer or reduce the selection.', {
+        new_chargeable: c.newRecords.length, remaining: allowance, account_remaining: quota.remaining, my_cap: mine.cap, resets_at: quota.resets_at,
       });
     }
-    const accepted = c.newRecords.slice(0, quota.remaining);
-    const overQuota = c.newRecords.slice(quota.remaining);
+    const accepted = c.newRecords.slice(0, allowance);
+    const overQuota = c.newRecords.slice(allowance);
     const day = quota.local_day;
     const ts = iso();
     const job = conn.prepare(`INSERT INTO cold_transfer_job (org_id, user_id, idempotency_key, mode, filter_json, assign_to, campaign_tag,
@@ -282,7 +302,7 @@ export function transfer({ membership, selection, idempotencyKey, allowPartial =
       item.run(jobId, r.id, 'ALREADY_ACQUIRED', 'NO_CHARGE_ALREADY_IN_CRM', 0, lead?.id ?? null);
     }
     for (const b of c.blocked) item.run(jobId, b.id, 'REJECTED', b.reason, 0, null);
-    for (const r of overQuota) item.run(jobId, r.id, 'REJECTED', 'DAILY_QUOTA_EXHAUSTED', 0, null);
+    for (const r of overQuota) item.run(jobId, r.id, 'REJECTED', capLimited ? 'USER_DAILY_CAP_REACHED' : 'DAILY_QUOTA_EXHAUSTED', 0, null);
 
     conn.prepare('UPDATE daily_quota_account SET committed_used = committed_used + ? WHERE org_id = ? AND local_day = ?').run(accepted.length, orgId, day);
     conn.prepare('UPDATE cold_transfer_job SET accepted = ?, already_acquired = ?, rejected = ?, charged = ?, status = ? WHERE id = ?')

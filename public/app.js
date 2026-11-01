@@ -116,7 +116,7 @@ function setLang(l, persist = true) {
 const APP_ROUTES = {
   overview: viewOverview, 'investor-history': viewInvestorHistory, 'my-cold': viewMyCold, hot: viewHot, crm: viewCrm,
   team: viewTeam, reports: viewReports, billing: viewBilling, integrations: viewIntegrations, settings: viewSettings,
-  onboarding: viewOnboarding, owner: viewOwner, activate: viewActivate,
+  onboarding: viewOnboarding, owner: viewOwner, activate: viewActivate, profile: viewProfile,
 };
 
 async function render() {
@@ -138,7 +138,9 @@ async function render() {
     const hasOrg = !!state.me.active_org;
     let name = route;
     if (!APP_ROUTES[name] || name === '' || name === 'signin') name = hasOrg ? 'overview' : isFinance() ? 'owner' : 'onboarding';
-    if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations'].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
+    // Everyone gives a name and mobile number once; until then this is the only page.
+    if (!state.me.profile_complete && name !== 'activate') name = 'profile';
+    if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations', 'profile'].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
     const html = await APP_ROUTES[name](parts.slice(1), query);
     app.innerHTML = shell(name, parts, html);
     afterRender();
@@ -190,7 +192,8 @@ function shell(name, parts, content) {
     ? `<select data-change="switch-org" aria-label="Organization" style="width:auto">${m.memberships.map((x) => `<option value="${x.org_id}" ${org?.org_id === x.org_id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>`
     : '';
   const q = m.entitlements?.cold?.quota;
-  const quota = q ? `<div class="quota-pill" title="${esc(t('resets_midnight'))}">❄ ${fmtNum(q.committed_used)} / ${fmtNum(q.plan_limit)}<span class="bar"><i style="width:${Math.min(100, (q.committed_used / q.plan_limit) * 100)}%"></i></span><span class="hide-sm">${fmtNum(q.remaining)} ${t('remaining')}</span></div>` : '';
+  const myCap = m.my_quota?.cap != null ? `<span class="hide-sm" title="Your personal daily limit">· you ${fmtNum(m.my_quota.used)}/${fmtNum(m.my_quota.cap)}</span>` : '';
+  const quota = q ? `<div class="quota-pill" title="${esc(t('resets_midnight'))}">❄ ${fmtNum(q.committed_used)} / ${fmtNum(q.plan_limit)}<span class="bar"><i style="width:${Math.min(100, (q.committed_used / q.plan_limit) * 100)}%"></i></span><span class="hide-sm">${fmtNum(q.remaining)} ${t('remaining')}</span>${myCap}</div>` : '';
   return `${m.demo_mode ? `<div class="demo-strip">${t('demo_banner')}</div>` : ''}
   <div class="shell">
     <aside class="side">${logo(true)}${nav}
@@ -265,21 +268,58 @@ const SIGNIN_ROLES = [
   ['finance', 'Finance admin', 'Verify payments, activation links (approved accounts only)'],
 ];
 
+// Details typed before Google sign-in live only in this browser tab until sign-in ends.
+const SIGNUP_KEY = 'aih_signup_profile';
+function signupProfile() { try { return JSON.parse(sessionStorage.getItem(SIGNUP_KEY) || 'null'); } catch { return null; } }
+function setSignupProfile(p) { try { p ? sessionStorage.setItem(SIGNUP_KEY, JSON.stringify(p)) : sessionStorage.removeItem(SIGNUP_KEY); } catch { /* private mode */ } }
+
+const ROLE_HINTS = {
+  director: 'You will create your agency account next. Your team shares the agency\'s 999 records a day; you can give each member a personal daily limit.',
+  solo: 'You will create your agent account next: 99 records a day for you.',
+  member: 'Use the same email your agency director invited. Your daily limit comes from your agency\'s plan and any personal limit your director sets.',
+  owner: 'Only the platform owner\'s Google account is accepted.',
+  finance: 'Only approved finance accounts are accepted.',
+};
+
 async function viewSignIn() {
   const c = state.cfg;
   const pendingActivation = safeGet('aih_pending_activation');
   const role = pendingActivation ? 'activation' : safeGet('aih_signin_role');
   const chosen = SIGNIN_ROLES.find(([k]) => k === role);
+  const profile = signupProfile();
+  const returning = state.signinReturning === true;
+  const ready = !!role && (pendingActivation || returning || !!profile);
   const google = c.google_client_id ? '<div id="gsi-btn" style="min-height:44px"></div>' : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`;
+  const step = (n, title, done) => `<div class="row"><span class="badge ${done ? 'ok' : 'gold'}">${done ? '✓' : n}</span><h3 style="margin:0">${title}</h3></div>`;
+
+  const roleCard = pendingActivation ? '' : `<div class="card grid">${step(1, 'Choose your account type', !!role)}
+      ${SIGNIN_ROLES.map(([k, n, d]) => `<button class="persona" data-act="pick-role" data-role="${k}" ${k === role ? 'style="border:2px solid var(--gold)" aria-pressed="true"' : 'aria-pressed="false"'}><span class="avatar">${k === role ? '✓' : n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>`;
+
+  let details = '';
+  if (role && !pendingActivation) {
+    details = profile && !returning
+      ? `<div class="card grid">${step(2, 'Your details', true)}
+          <div class="kv"><span class="k">Full name</span><span class="v">${esc(profile.full_name)}</span><span class="k">Mobile</span><span class="v mono">${esc(profile.phone)}</span><span class="k">Email</span><span class="v">${esc(profile.email)}</span></div>
+          <button class="btn sm ghost" data-act="signup-edit" style="justify-self:start">Edit details</button></div>`
+      : returning
+        ? `<div class="card grid">${step(2, 'Welcome back', true)}<p class="small muted" style="margin:0">Sign in with the Google account you registered with. <a href="#" data-act="signup-new">New here? Enter your details</a></p></div>`
+        : `<form class="card grid" data-form="signup-profile" style="gap:12px">${step(2, 'Your details', false)}
+            <p class="small muted" style="margin:0">${esc(ROLE_HINTS[role] || '')}</p>
+            <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" placeholder="e.g. Sara Al Mansouri"></label>
+            <label class="field">Mobile number<input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="+971 50 123 4567"></label>
+            <label class="field">Email<input type="email" name="email" required autocomplete="email" placeholder="name@company.com"><span class="small muted">Must be the email of the Google account you will sign in with.</span></label>
+            <div class="row"><button class="btn primary">Continue</button><a href="#" class="small" data-act="signup-returning">I already have an account</a></div>
+          </form>`;
+  }
+
   return `<div class="auth-wrap"><div class="auth-card">
     <div style="text-align:center">${logo()}</div>
-    ${pendingActivation ? '' : `<div class="card grid"><div class="row"><span class="badge gold">1</span><h3 style="margin:0">Sign in as</h3></div>
-      ${SIGNIN_ROLES.map(([k, n, d]) => `<button class="persona" data-act="pick-role" data-role="${k}" ${k === role ? 'style="border:2px solid var(--gold)" aria-pressed="true"' : 'aria-pressed="false"'}><span class="avatar">${k === role ? '✓' : n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>`}
+    ${roleCard}${details}
     <div class="card grid">
-      <div class="row">${pendingActivation ? '' : '<span class="badge gold">2</span>'}<h2 style="margin:0">${t('sign_in')}${chosen ? ` · ${esc(chosen[1])}` : ''}</h2></div>
+      ${pendingActivation ? `<h2 style="margin:0">${t('sign_in')}</h2>` : step(3, `${t('sign_in')} with Google${chosen ? ` · ${esc(chosen[1])}` : ''}`, false)}
       ${pendingActivation ? `<div class="banner ok">Sign in with the Google account your activation email was sent to.</div>` : ''}
-      ${role ? google : '<p class="muted">Choose how you are signing in above, then continue with your Google account.</p>'}
-      <p class="small muted">We only use your Google identity (name, email, account ID). We never request access to your inbox.</p>
+      ${ready ? google : `<p class="muted" style="margin:0">${role ? 'Enter your details above, then continue with Google.' : 'Choose your account type above.'}</p>`}
+      <p class="small muted">We only use your Google identity (name, email, account ID) to sign you in. We never request access to your inbox.</p>
     </div>
     <a href="#/" class="small muted" style="text-align:center">← AI-DATA</a>
   </div></div>`;
@@ -293,7 +333,10 @@ function afterSignIn() {
       client_id: state.cfg.google_client_id, nonce: state.cfg.nonce, ux_mode: 'popup',
       callback: async ({ credential }) => {
         try {
-          await POST('/api/auth/google', { credential });
+          const profile = state.signinReturning ? null : signupProfile();
+          await POST('/api/auth/google', { credential, ...(profile ? { profile } : {}) });
+          setSignupProfile(null);
+          state.signinReturning = false;
           state.cfg = null;
           const role = safeGet('aih_signin_role');
           if (['owner', 'finance'].includes(role)) {
@@ -312,6 +355,23 @@ function afterSignIn() {
   s.async = true;
   s.onload = init;
   document.head.append(s);
+}
+
+// ---------------------------------------------------------------------------------
+// Profile: name + mobile for every account (asked once, editable later)
+// ---------------------------------------------------------------------------------
+async function viewProfile() {
+  const u = state.me.user;
+  const first = !state.me.profile_complete;
+  return `<div class="page-head"><div><div class="kicker">${first ? 'One more step' : 'Account'}</div><h1>${first ? 'Complete your profile' : 'Your profile'}</h1></div></div>
+  ${first ? '<div class="banner cold" style="max-width:640px;margin-bottom:16px">Every account needs a full name and a mobile number before continuing.</div>' : ''}
+  <form class="card grid" data-form="profile" style="max-width:640px;gap:12px">
+    <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" value="${esc(u.name || '')}"></label>
+    <label class="field">Mobile number<input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="+971 50 123 4567" value="${esc(u.phone || '')}"></label>
+    <label class="field">Email (Google account)<input type="email" value="${esc(u.email)}" disabled></label>
+    ${state.me.my_quota ? `<div class="small muted">Your daily limit in ${esc(state.me.active_org?.name || '')}: ${state.me.my_quota.cap == null ? 'shared account allowance (no personal limit)' : `<b>${fmtNum(state.me.my_quota.cap)}</b> records a day`}</div>` : ''}
+    <div class="row"><button class="btn primary">${first ? 'Save and continue' : 'Save'}</button></div>
+  </form>`;
 }
 
 // ---------------------------------------------------------------------------------
@@ -487,6 +547,7 @@ async function openTransfer(selection) {
       <span class="k">${t('blocked_rights')}</span><span class="v">${fmtNum(est.blocked)}</span>
       <span class="k">${t('new_count_quota')}</span><span class="v" style="color:var(--cold)">${fmtNum(est.new_chargeable)}</span>
       <span class="k total">${t('remaining')} (${q ? esc(q.day) : '—'}, Asia/Dubai)</span><span class="v total">${q ? `${fmtNum(q.remaining)} / ${fmtNum(q.limit)}` : '—'}</span>
+      ${q?.my_cap != null ? `<span class="k">Your personal daily limit</span><span class="v">${fmtNum(q.my_used)} / ${fmtNum(q.my_cap)} used</span>` : ''}
       <span class="k">${t('deliverable')}</span><span class="v" style="color:var(--ok)">${fmtNum(est.deliverable_now)}</span>
     </div>
     ${Object.keys(est.blocked_reasons).length ? `<div class="small muted">${Object.entries(est.blocked_reasons).map(([k, v]) => `${esc(REASON_LABEL[k] || human(k))}: ${v}`).join(' · ')}</div>` : ''}
@@ -634,17 +695,32 @@ async function viewLead(id) {
 
 async function viewTeam() {
   const m = await GET('/api/org/members');
-  return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('team')}</h1></div><div class="spacer"></div><span class="badge gold">Seats: ${t('unlimited_members')}</span></div>
+  const manage = can('members.manage');
+  const limit = m.account_limit;
+  const capCell = (x) => {
+    const used = `${fmtNum(x.used_today)}${x.daily_cap != null ? ` / ${fmtNum(x.daily_cap)}` : ''}`;
+    if (!manage || x.role === 'ORG_OWNER') return `<span class="small">${used}${x.daily_cap == null ? ' <span class="muted">· shared</span>' : ''}</span>`;
+    return `<form class="row" data-form="member-cap" data-id="${x.user_id}" style="gap:6px;flex-wrap:nowrap">
+      <input type="number" name="daily_cap" min="0" ${limit ? `max="${limit}"` : ''} value="${x.daily_cap ?? ''}" placeholder="No limit" style="width:96px" aria-label="Daily limit for ${esc(x.name)}">
+      <button class="btn sm">Save</button><span class="small muted">${fmtNum(x.used_today)} today</span></form>`;
+  };
+  return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('team')}</h1></div><div class="spacer"></div><span class="badge gold">Seats: ${t('unlimited_members')}</span>${limit ? `<span class="badge">Account limit: ${fmtNum(limit)} / day</span>` : ''}</div>
   <div class="banner cold" style="margin-bottom:16px">❄ ${esc(m.quota_note)}</div>
+  <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>${t('name')}</th><th>Mobile</th><th>${t('email')}</th><th>${t('role')}</th><th>Daily limit (used today)</th><th></th></tr></thead><tbody>${m.members.map((x) => `<tr>
+    <td><b>${esc(x.name)}</b></td><td class="small mono">${esc(x.phone || '—')}</td><td class="small">${esc(x.email)}</td><td><span class="badge">${esc(human(x.role))}</span></td>
+    <td>${capCell(x)}</td>
+    <td>${manage && x.role !== 'ORG_OWNER' ? `<button class="btn sm ghost" data-act="remove-member" data-id="${x.user_id}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
   <div class="grid g2" style="align-items:start">
-    <div class="table-wrap"><table><thead><tr><th>${t('name')}</th><th>${t('email')}</th><th>${t('role')}</th><th></th></tr></thead><tbody>${m.members.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td class="small">${esc(x.email)}</td><td><span class="badge">${esc(human(x.role))}</span></td><td>${can('members.manage') && x.role !== 'ORG_OWNER' ? `<button class="btn sm ghost" data-act="remove-member" data-id="${x.user_id}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-    <div class="grid">
-      ${can('members.manage') ? `<form class="card grid" data-form="invite" style="gap:10px"><h3>${t('invite')}</h3><p class="small muted">Invitees sign in with Google using this email and join this account — they never get a separate quota.</p>
+    ${manage ? `<form class="card grid" data-form="invite" style="gap:10px"><h3>${t('invite')}</h3><p class="small muted">The person signs in with Google using this email and joins this account. Leave the daily limit empty to let them use the shared allowance.</p>
+      <div class="grid g2">
+        <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120"></label>
+        <label class="field">Mobile number<input type="tel" name="phone" inputmode="tel" placeholder="+971 50 123 4567"></label>
         <label class="field">${t('email')}<input type="email" name="email" required></label>
         <label class="field">${t('role')}<select name="role">${['AGENT', 'TEAM_LEADER', 'SALES_MANAGER', 'MARKETING_MANAGER', 'ORG_ADMIN', 'AGENCY_DIRECTOR', 'AUDITOR'].map((r) => `<option value="${r}">${esc(human(r))}</option>`).join('')}</select></label>
-        <button class="btn primary">${t('invite')}</button></form>` : ''}
-      <div class="card"><h3>Pending invitations (${m.invitations.length})</h3>${m.invitations.slice(0, 20).map((i) => `<div class="small" style="padding:4px 0;border-top:1px solid var(--line)">${esc(i.email)} · ${esc(human(i.role))} · expires ${fmtDate(i.expires_at)}</div>`).join('') || '<span class="muted">—</span>'}${m.invitations.length > 20 ? `<div class="small muted">+${m.invitations.length - 20} more</div>` : ''}</div>
-    </div>
+        <label class="field">Daily limit (records)<input type="number" name="daily_cap" min="0" ${limit ? `max="${limit}"` : ''} placeholder="No personal limit"></label>
+      </div>
+      <button class="btn primary" style="justify-self:start">${t('invite')}</button></form>` : ''}
+    <div class="card"><h3>Pending invitations (${m.invitations.length})</h3>${m.invitations.slice(0, 20).map((i) => `<div class="small" style="padding:6px 0;border-top:1px solid var(--line)"><b>${esc(i.full_name || i.email)}</b>${i.full_name ? ` · ${esc(i.email)}` : ''}${i.phone ? ` · <span class="mono">${esc(i.phone)}</span>` : ''}<br>${esc(human(i.role))}${i.daily_cap != null ? ` · ${fmtNum(i.daily_cap)}/day` : ''} · expires ${fmtDate(i.expires_at)}</div>`).join('') || '<span class="muted">—</span>'}${m.invitations.length > 20 ? `<div class="small muted">+${m.invitations.length - 20} more</div>` : ''}</div>
   </div>`;
 }
 
@@ -876,6 +952,9 @@ const actions = {
     } catch (e) { toast(errMsg(e), true); }
   },
   'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); render(); },
+  'signup-edit': () => { setSignupProfile(null); state.signinReturning = false; render(); },
+  'signup-returning': () => { state.signinReturning = true; render(); },
+  'signup-new': () => { state.signinReturning = false; render(); },
   'demo-login': async (el) => { await POST('/api/auth/demo', { persona: el.dataset.persona }); state.ih.counts = null; state.owner.counts = null; go('#/'); },
   logout: async () => { await POST('/api/auth/logout'); state.cfg = null; state.ih = { filter: {}, results: [], counts: null, cursor: null, selected: new Set(), options: null }; go('#/'); },
   notifs: async () => {
@@ -970,6 +1049,21 @@ function updateBasket() {
 }
 
 const forms = {
+  'signup-profile': async (f) => {
+    const p = await POST('/api/auth/check-profile', { full_name: f.full_name.value, phone: f.phone.value, email: f.email.value });
+    setSignupProfile(p);
+    render();
+  },
+  profile: async (f) => {
+    await POST('/api/me/profile', { full_name: f.full_name.value, phone: f.phone.value });
+    await loadMe();
+    toast('Profile saved ✓');
+    go('#/');
+  },
+  'member-cap': async (f) => {
+    await api('PATCH', `/api/org/members/${f.dataset.id}`, { daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
+    toast('Daily limit saved ✓'); render();
+  },
   'create-org': async (f) => {
     await POST('/api/organizations', { name: f.name.value, kind: f.plan.value === 'AGENCY_MONTHLY' ? 'AGENCY' : 'AGENT', business_contact: f.business_contact.value, license_no: f.license_no.value, language: f.language.value, timezone: f.timezone.value, terms: f.terms.checked });
     go(`#/billing?plan=${f.plan.value}`);
@@ -979,7 +1073,10 @@ const forms = {
   'crm-filter': (f) => { const q = new URLSearchParams(Object.fromEntries([...new FormData(f)].filter(([, v]) => v))).toString(); go('#/crm' + (q ? '?' + q : '')); },
   'lead-activity': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/activities`, { type: f.type.value, body: f.body.value }); toast('✓'); render(); },
   'lead-task': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/tasks`, { title: f.title.value, due_at: new Date(f.due_at.value).toISOString() }); toast('✓'); render(); },
-  invite: async (f) => { await POST('/api/org/invitations', { email: f.email.value, role: f.role.value }); toast('Invitation recorded ✓'); render(); },
+  invite: async (f) => {
+    await POST('/api/org/invitations', { full_name: f.full_name.value, phone: f.phone.value || undefined, email: f.email.value, role: f.role.value, daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
+    toast('Invitation recorded ✓'); render();
+  },
   'verify-cash': async (f) => {
     const r = await withMfa(() => POST(`/api/owner/cash/${f.dataset.id}/verify`, { amount_aed: Number(f.amount_aed.value), paid_on: f.paid_on.value, channel: f.channel.value, receipt_no: f.receipt_no.value }));
     showActivationLink(r);

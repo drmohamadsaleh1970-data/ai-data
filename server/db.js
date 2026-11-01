@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PgConnection } from './pg.js';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
@@ -505,6 +505,25 @@ export function pgSchema(sql = SCHEMA) {
     .replace(/\bREAL\b/g, 'DOUBLE PRECISION');
 }
 
+// Columns added after the first release. New installs and existing databases both get
+// them on start (CREATE TABLE IF NOT EXISTS never alters an existing table).
+const ADDED_COLUMNS = [
+  ['platform_user', 'phone', 'TEXT'],                 // E.164, entered before Google sign-in
+  ['platform_user', 'profile_completed_at', 'TEXT'],  // set once name + phone are confirmed
+  ['membership', 'daily_cap', 'INTEGER'],             // per-user Cold cap inside the shared pool; NULL = no cap
+  ['invitation', 'full_name', 'TEXT'],
+  ['invitation', 'phone', 'TEXT'],
+  ['invitation', 'daily_cap', 'INTEGER'],
+];
+
+function addColumns(conn, pg) {
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    if (pg) { conn.exec(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type}`); continue; }
+    const has = conn.prepare(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`).get(column);
+    if (!has) conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
+}
+
 const ID_TABLES = new Set([...SCHEMA.matchAll(/CREATE TABLE IF NOT EXISTS (\w+) \(\s*id INTEGER PRIMARY KEY/g)].map((m) => m[1]));
 
 export function openDb(file = process.env.DB_FILE || path.resolve('data/aihome.db')) {
@@ -514,6 +533,7 @@ export function openDb(file = process.env.DB_FILE || path.resolve('data/aihome.d
   const conn = new DatabaseSync(file);
   conn.exec('PRAGMA busy_timeout = 10000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   conn.exec(SCHEMA);
+  addColumns(conn, false);
   const applied = conn.prepare('SELECT 1 FROM schema_migrations WHERE version = ?').get(SCHEMA_VERSION);
   if (!applied) conn.prepare('INSERT INTO schema_migrations VALUES (?, ?)').run(SCHEMA_VERSION, new Date().toISOString());
   return conn;
@@ -529,6 +549,7 @@ function openPostgres() {
   try {
     if (schema) conn.exec(`CREATE SCHEMA IF NOT EXISTS "${schema}"; SET LOCAL search_path TO "${schema}"`);
     conn.exec(pgSchema());
+    addColumns(conn, true);
     const applied = conn.prepare('SELECT 1 FROM schema_migrations WHERE version = ?').get(SCHEMA_VERSION);
     if (!applied) conn.prepare('INSERT INTO schema_migrations VALUES (?, ?)').run(SCHEMA_VERSION, new Date().toISOString());
     conn.exec('COMMIT');
