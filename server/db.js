@@ -550,6 +550,13 @@ function openPostgres() {
     if (schema) conn.exec(`CREATE SCHEMA IF NOT EXISTS "${schema}"; SET LOCAL search_path TO "${schema}"`);
     conn.exec(pgSchema());
     addColumns(conn, true);
+    // Supabase also publishes the public schema through its REST API (anon key). The app
+    // connects as the table owner, which row level security does not restrict, so turning
+    // it on with no policies closes that side door without affecting the app.
+    conn.exec(`DO $$ DECLARE t record; BEGIN
+      FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND NOT rowsecurity LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t.tablename);
+      END LOOP; END $$`);
     const applied = conn.prepare('SELECT 1 FROM schema_migrations WHERE version = ?').get(SCHEMA_VERSION);
     if (!applied) conn.prepare('INSERT INTO schema_migrations VALUES (?, ?)').run(SCHEMA_VERSION, new Date().toISOString());
     conn.exec('COMMIT');
