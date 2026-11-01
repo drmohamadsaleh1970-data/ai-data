@@ -43,8 +43,17 @@ test('CRM: deal value and tags, bulk stage change, drag-and-drop pipeline, templ
   // Pipeline: drag one card from Qualified to Viewing scheduled.
   await page.goto('/#/crm?view=pipeline&q=Pro Lead');
   await expect(page.getByText('Open pipeline value')).toBeVisible();
-  const card = page.locator('.kcol[data-stage=QUALIFIED] .kcard').filter({ hasText: 'Pro Lead 0' });
-  await card.dragTo(page.locator('.kcol[data-stage=VIEWING_SCHEDULED]'));
+  await expect(page.locator('.kcol[data-stage=QUALIFIED] .kcard').filter({ hasText: 'Pro Lead 0' })).toBeVisible();
+  // The board scrolls sideways, which a simulated mouse cannot do mid-drag; send the same
+  // browser drag events a person's drag produces.
+  await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.kcol[data-stage=QUALIFIED] .kcard')].find((c) => c.textContent.includes('Pro Lead 0'));
+    const col = document.querySelector('.kcol[data-stage=VIEWING_SCHEDULED]');
+    const dt = new DataTransfer();
+    card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+    col.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    col.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  });
   await expect(page.getByText('Moved to Viewing scheduled ✓')).toBeVisible();
   await expect(page.locator('.kcol[data-stage=VIEWING_SCHEDULED]')).toContainText('Pro Lead 0');
 
