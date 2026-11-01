@@ -31,5 +31,6 @@ test('owner creates a website key; the drop-in form on another site delivers a H
 
   await signIn(page, 'director');
   await page.goto('/#/crm?source=HOT');
-  await expect(page.getByRole('table')).toContainText(name);
+  // Wait for the CRM list itself (the owner's Hot page before it also has tables).
+  await expect(page.getByRole('row').filter({ hasText: name })).toBeVisible();
 });

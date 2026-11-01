@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test';
+
+// Named zz- so it runs last: it approves Hot pricing in the shared test database, which
+// changes what the public landing page shows (public.spec.js expects it unpriced).
 import { signIn } from './helpers.js';
 
 // Owner turns on automatic distribution on the Hot page; a new pool lead lands in the
