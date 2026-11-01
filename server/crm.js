@@ -17,15 +17,19 @@ function scope(req) {
   return { sql: 'l.org_id = ? AND l.assigned_user_id = ?', params: [orgId, req.user.id] };
 }
 
-export function listLeads(req, { source, stage, q, assigned } = {}) {
+export function listLeads(req, { source, stage, q, assigned, tag, overdue } = {}) {
   const s = scope(req);
   const where = [s.sql];
   const params = [...s.params];
   if (source) { where.push('l.source_type = ?'); params.push(source); }
   if (stage) { where.push('l.stage = ?'); params.push(stage); }
   if (assigned) { where.push('l.assigned_user_id = ?'); params.push(Number(assigned)); }
+  if (tag) { where.push("(',' || COALESCE(l.tags,'') || ',') LIKE ?"); params.push(`%,${normTag(tag)},%`); }
+  if (overdue) { where.push('EXISTS (SELECT 1 FROM follow_up_task t WHERE t.lead_id = l.id AND t.done_at IS NULL AND t.due_at < ?)'); params.push(iso()); }
   if (q) { where.push('(lower(c.full_name) LIKE ? OR lower(c.email) LIKE ? OR lower(c.phone) LIKE ?)'); const like = `%${String(q).toLowerCase()}%`; params.push(like, like, like); }
   return getDb().prepare(`SELECT l.id, l.source_type, l.source_detail, l.stage, l.priority, l.first_contact_due, l.first_contacted_at, l.created_at, l.campaign_tag,
+      l.deal_value_aed, l.expected_close, l.tags,
+      (SELECT MIN(t.due_at) FROM follow_up_task t WHERE t.lead_id = l.id AND t.done_at IS NULL) AS next_task_due,
       c.full_name, c.email, c.phone, c.marketing_permission, c.suppressed, u.name AS assignee_name, l.assigned_user_id
     FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id LEFT JOIN platform_user u ON u.id = l.assigned_user_id
     WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT 500`).all(...params);
@@ -52,10 +56,28 @@ export function leadDetail(req, id) {
     outreach_allowed: lead.suppressed ? false : lead.marketing_permission === 'GRANTED',
     activities: db.prepare('SELECT a.*, u.name AS user_name FROM lead_activity a LEFT JOIN platform_user u ON u.id = a.user_id WHERE a.lead_id = ? ORDER BY a.created_at DESC').all(lead.id),
     tasks: db.prepare('SELECT * FROM follow_up_task WHERE lead_id = ? ORDER BY due_at').all(lead.id),
+    duplicates: duplicatesOf(req, lead),
   };
 }
 
-export function updateLead(req, id, { stage, assigned_user_id, priority }) {
+// Other leads in the same organization with the same mobile or email (the person may
+// have enquired twice, or exist as Cold and Hot). Shown as a warning; never merged.
+function duplicatesOf(req, lead) {
+  if (!lead.phone && !lead.email) return [];
+  const s = scope(req);
+  return getDb().prepare(`SELECT l.id, l.stage, l.source_type, c.full_name, u.name AS assignee_name FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id
+      LEFT JOIN platform_user u ON u.id = l.assigned_user_id
+    WHERE ${s.sql} AND l.id != ? AND ((c.phone IS NOT NULL AND c.phone = ?) OR (c.email IS NOT NULL AND lower(c.email) = lower(?))) ORDER BY l.id LIMIT 10`)
+    .all(...s.params, lead.id, lead.phone ?? null, lead.email ?? null);
+}
+
+const normTag = (t) => String(t || '').trim().toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/\s+/g, '-').slice(0, 30);
+export function parseTags(input) {
+  const list = (Array.isArray(input) ? input : String(input ?? '').split(',')).map(normTag).filter(Boolean);
+  return [...new Set(list)].slice(0, 10);
+}
+
+export function updateLead(req, id, { stage, assigned_user_id, priority, deal_value_aed, expected_close, tags }) {
   const lead = loadLead(req, id);
   const db = getDb();
   const ts = iso();
@@ -77,6 +99,19 @@ export function updateLead(req, id, { stage, assigned_user_id, priority }) {
   if (priority) {
     if (!['LOW', 'NORMAL', 'HIGH', 'URGENT'].includes(priority)) throw new HttpError(400, 'INVALID_PRIORITY');
     db.prepare('UPDATE crm_lead SET priority = ?, updated_at = ? WHERE id = ?').run(priority, ts, lead.id);
+  }
+  if (deal_value_aed !== undefined) {
+    const v = deal_value_aed === null || deal_value_aed === '' ? null : Math.round(Number(deal_value_aed));
+    if (v !== null && (!Number.isFinite(v) || v < 0 || v > 10_000_000_000)) throw new HttpError(400, 'INVALID_DEAL_VALUE');
+    db.prepare('UPDATE crm_lead SET deal_value_aed = ?, updated_at = ? WHERE id = ?').run(v, ts, lead.id);
+  }
+  if (expected_close !== undefined) {
+    const d = expected_close || null;
+    if (d !== null && !/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new HttpError(400, 'INVALID_DATE');
+    db.prepare('UPDATE crm_lead SET expected_close = ?, updated_at = ? WHERE id = ?').run(d, ts, lead.id);
+  }
+  if (tags !== undefined) {
+    db.prepare('UPDATE crm_lead SET tags = ?, updated_at = ? WHERE id = ?').run(parseTags(tags).join(',') || null, ts, lead.id);
   }
   return leadDetail(req, lead.id);
 }
@@ -107,9 +142,71 @@ export function completeTask(req, taskId) {
   return { ok: true };
 }
 
+// Several leads at once: stage, assignee and/or a tag. Each lead goes through the same
+// checks as a single update, so agents can only touch their own leads.
+export function bulkUpdate(req, { ids, stage, assigned_user_id, add_tag }) {
+  const list = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Number.isInteger))];
+  if (!list.length) throw new HttpError(400, 'EMPTY_SELECTION');
+  if (list.length > 200) throw new HttpError(400, 'SELECTION_TOO_LARGE', 'At most 200 leads at a time.');
+  if (!stage && assigned_user_id == null && !add_tag) throw new HttpError(400, 'NOTHING_TO_CHANGE');
+  const tag = add_tag ? normTag(add_tag) : null;
+  return tx(() => {
+    let updated = 0;
+    for (const id of list) {
+      const lead = loadLead(req, id);
+      const tags = tag ? parseTags([...(lead.tags ? lead.tags.split(',') : []), tag]).join(',') : undefined;
+      updateLead(req, id, { stage: stage || undefined, assigned_user_id: assigned_user_id ?? undefined, tags });
+      updated++;
+    }
+    audit({ actor: req.user.id, org: req.membership.org_id, action: 'CRM_BULK_UPDATE', meta: { count: updated, stage, assigned_user_id, add_tag: tag } });
+    return { updated };
+  });
+}
+
+export function snoozeTask(req, taskId, { days = 1 } = {}) {
+  const t = getDb().prepare('SELECT * FROM follow_up_task WHERE id = ? AND org_id = ? AND done_at IS NULL').get(Number(taskId), req.membership.org_id);
+  if (!t) throw new HttpError(404, 'NOT_FOUND');
+  loadLead(req, t.lead_id);
+  const n = Math.min(Math.max(Number(days) || 1, 1), 30);
+  const base = Math.max(Date.parse(t.due_at), now().getTime());
+  const due = new Date(base + n * 86_400_000).toISOString();
+  getDb().prepare('UPDATE follow_up_task SET due_at = ? WHERE id = ?').run(due, t.id);
+  return { id: t.id, due_at: due };
+}
+
+// Ready-made messages; {name}, {agent}, {area}, {company} are filled in on the lead page.
+export const BUILTIN_TEMPLATES = [
+  { id: 'b-intro-en', name: 'First contact (EN)', channel: 'WHATSAPP', language: 'en', body: 'Hello {name}, this is {agent} from {company}. You recently showed interest in property in {area}. When would be a good time for a short call?' },
+  { id: 'b-intro-ar', name: 'أول تواصل (AR)', channel: 'WHATSAPP', language: 'ar', body: 'مرحباً {name}، معك {agent} من {company}. لاحظنا اهتمامك بعقار في {area}. متى يناسبك اتصال قصير؟' },
+  { id: 'b-follow-en', name: 'Follow-up after call (EN)', channel: 'WHATSAPP', language: 'en', body: 'Hi {name}, thank you for your time today. As promised, I will share options in {area} that match what you are looking for. — {agent}, {company}' },
+  { id: 'b-viewing-en', name: 'Viewing confirmation (EN)', channel: 'WHATSAPP', language: 'en', body: 'Hi {name}, confirming your viewing in {area}. Please reply YES to confirm or suggest another time. — {agent}' },
+  { id: 'b-email-en', name: 'Options by email (EN)', channel: 'EMAIL', language: 'en', body: 'Dear {name},\n\nThank you for your interest in {area}. Please find below a selection of properties that match your requirements.\n\nKind regards,\n{agent}\n{company}' },
+];
+
+export function listTemplates(req) {
+  const own = getDb().prepare('SELECT id, name, channel, language, body FROM message_template WHERE org_id = ? ORDER BY id DESC').all(req.membership.org_id);
+  return [...own.map((t) => ({ ...t, custom: true })), ...BUILTIN_TEMPLATES];
+}
+
+export function createTemplate(req, { name, channel, language, body }) {
+  const n = String(name || '').trim().slice(0, 80);
+  const b = String(body || '').trim().slice(0, 2000);
+  if (!n || !b) throw new HttpError(400, 'NAME_AND_TEXT_REQUIRED');
+  if (!['WHATSAPP', 'EMAIL'].includes(channel)) throw new HttpError(400, 'INVALID_CHANNEL');
+  const id = Number(getDb().prepare('INSERT INTO message_template (org_id, name, channel, language, body, created_by, created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(req.membership.org_id, n, channel, ['en', 'ar', 'fr', 'ru', 'tr'].includes(language) ? language : 'en', b, req.user.id, iso()).lastInsertRowid);
+  return { id };
+}
+
+export function deleteTemplate(req, id) {
+  const r = getDb().prepare('DELETE FROM message_template WHERE id = ? AND org_id = ?').run(Number(id), req.membership.org_id);
+  if (!r.changes) throw new HttpError(404, 'NOT_FOUND');
+  return { ok: true };
+}
+
 export function myTasks(req) {
   const s = scope(req);
-  return getDb().prepare(`SELECT t.*, c.full_name, l.source_type FROM follow_up_task t JOIN crm_lead l ON l.id = t.lead_id JOIN crm_contact c ON c.id = l.contact_id
+  return getDb().prepare(`SELECT t.*, c.full_name, c.phone, l.source_type, l.stage FROM follow_up_task t JOIN crm_lead l ON l.id = t.lead_id JOIN crm_contact c ON c.id = l.contact_id
     WHERE ${s.sql} AND t.done_at IS NULL ORDER BY t.due_at LIMIT 200`).all(...s.params);
 }
 

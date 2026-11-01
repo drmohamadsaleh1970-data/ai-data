@@ -1,8 +1,8 @@
 import ExcelJS from 'exceljs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDb } from './db.js';
-import { HttpError, iso, audit, randomToken } from './util.js';
+import { getDb, tx } from './db.js';
+import { HttpError, iso, audit, randomToken, dubaiDay } from './util.js';
 import { parseFilter } from './cold.js';
 import { activeSubscription } from './entitlements.js';
 
@@ -138,4 +138,109 @@ export function auditLog({ limit = 200, action } = {}) {
   const where = action ? 'WHERE a.action = ?' : '';
   return getDb().prepare(`SELECT a.*, u.email AS actor_email FROM audit_log a LEFT JOIN platform_user u ON u.id = a.actor_user_id ${where} ORDER BY a.id DESC LIMIT ?`)
     .all(...(action ? [action] : []), Math.min(Number(limit) || 200, 1000));
+}
+
+// --- Owner: one customer account in detail, per-user daily limits ----------------------
+export function orgDetail(orgId) {
+  const db = getDb();
+  const org = db.prepare('SELECT o.id, o.name, o.kind, o.created_at, u.email AS owner_email FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.id = ?').get(Number(orgId));
+  if (!org) throw new HttpError(404, 'NOT_FOUND');
+  const sub = activeSubscription(org.id);
+  return {
+    ...org,
+    plan: sub ? { code: sub.plan_code, name: sub.plan_name, daily_limit: sub.cold_daily_limit, period_end: sub.current_period_end } : null,
+    members: db.prepare(`SELECT m.user_id, u.name, u.email, u.phone, m.role, m.daily_cap,
+        (SELECT COALESCE(SUM(l.delta),0) FROM quota_ledger l WHERE l.org_id = m.org_id AND l.user_id = m.user_id AND l.local_day = ?) AS used_today,
+        (SELECT COUNT(*) FROM crm_lead x WHERE x.org_id = m.org_id AND x.assigned_user_id = m.user_id) AS leads
+      FROM membership m JOIN platform_user u ON u.id = m.user_id WHERE m.org_id = ? AND m.status = 'ACTIVE' ORDER BY m.id`).all(dubaiDay(), org.id),
+    crm: db.prepare('SELECT (SELECT COUNT(*) FROM crm_lead WHERE org_id = ?) AS leads, (SELECT COUNT(*) FROM crm_contact WHERE org_id = ?) AS contacts').get(org.id, org.id),
+  };
+}
+
+export function setUserCap({ actor, orgId, userId, value }) {
+  const db = getDb();
+  const m = db.prepare("SELECT 1 FROM membership WHERE org_id = ? AND user_id = ? AND status = 'ACTIVE'").get(Number(orgId), Number(userId));
+  if (!m) throw new HttpError(404, 'NOT_A_MEMBER');
+  let cap = null;
+  if (value !== null && value !== undefined && value !== '') {
+    cap = Number(value);
+    if (!Number.isInteger(cap) || cap < 0 || cap > 100_000) throw new HttpError(400, 'INVALID_CAP', 'Daily limit must be a whole number (or empty for no personal limit).');
+  }
+  db.prepare('UPDATE membership SET daily_cap = ? WHERE org_id = ? AND user_id = ?').run(cap, Number(orgId), Number(userId));
+  audit({ actor: actor.id, org: Number(orgId), action: 'OWNER_MEMBER_CAP_SET', target: `user:${userId}`, meta: { daily_cap: cap } });
+  return { user_id: Number(userId), daily_cap: cap };
+}
+
+// --- Owner: deleting data (irreversible; typed confirmation + audit) ---------------------
+export const CONFIRM = {
+  CRM_ORG: 'DELETE CRM DATA',
+  CRM_ALL: 'DELETE ALL CRM DATA',
+  INVESTORS_ALL: 'DELETE ALL INVESTOR DATA',
+};
+const confirmed = (given, phrase) => {
+  if (String(given || '').trim().toUpperCase() !== phrase) throw new HttpError(400, 'CONFIRMATION_REQUIRED', `Type "${phrase}" to confirm.`);
+};
+
+// Removes CRM leads matching `leadWhere` (an SQL condition on crm_lead aliased as l) with
+// their notes and follow-ups, then contacts left without leads. Records whose CRM copy is
+// removed can be transferred again later (the acquisition grant goes with it). Billing
+// ledgers and transfer history are kept.
+function deleteLeads(conn, leadWhere, params) {
+  const ids = `SELECT l.id FROM crm_lead l WHERE ${leadWhere}`;
+  const contacts = conn.prepare(`SELECT DISTINCT l.contact_id AS id, l.org_id FROM crm_lead l WHERE ${leadWhere}`).all(...params);
+  conn.prepare(`DELETE FROM lead_activity WHERE lead_id IN (${ids})`).run(...params);
+  conn.prepare(`DELETE FROM follow_up_task WHERE lead_id IN (${ids})`).run(...params);
+  conn.prepare(`UPDATE cold_transfer_item SET crm_lead_id = NULL WHERE crm_lead_id IN (${ids})`).run(...params);
+  const leads = conn.prepare(`DELETE FROM crm_lead WHERE id IN (${ids})`).run(...params).changes;
+  let removedContacts = 0;
+  for (const c of contacts) {
+    if (conn.prepare('SELECT 1 FROM crm_lead WHERE contact_id = ?').get(c.id)) continue;
+    const contact = conn.prepare('SELECT investor_id FROM crm_contact WHERE id = ?').get(c.id);
+    if (contact?.investor_id) conn.prepare('DELETE FROM record_acquisition_grant WHERE org_id = ? AND investor_id = ?').run(c.org_id, contact.investor_id);
+    removedContacts += conn.prepare('DELETE FROM crm_contact WHERE id = ?').run(c.id).changes;
+  }
+  return { leads, contacts: removedContacts };
+}
+
+export function deleteCrmData({ actor, orgId, userId, confirm }) {
+  confirmed(confirm, CONFIRM.CRM_ORG);
+  const org = getDb().prepare('SELECT id, name FROM organization WHERE id = ?').get(Number(orgId));
+  if (!org) throw new HttpError(404, 'NOT_FOUND');
+  return tx((conn) => {
+    const out = userId
+      ? deleteLeads(conn, 'l.org_id = ? AND l.assigned_user_id = ?', [org.id, Number(userId)])
+      : deleteLeads(conn, 'l.org_id = ?', [org.id]);
+    conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target, meta_json) VALUES (?,?,?,?,?,?)')
+      .run(iso(), actor.id, org.id, 'OWNER_CRM_DATA_DELETED', userId ? `user:${userId}` : `org:${org.id}`, JSON.stringify(out));
+    return { organization: org.name, user_id: userId ? Number(userId) : null, ...out };
+  });
+}
+
+// Every customer account. The platform owners' own follow-up CRM is not a customer and is kept.
+export function deleteAllCrmData({ actor, confirm }) {
+  confirmed(confirm, CONFIRM.CRM_ALL);
+  return tx((conn) => {
+    const where = `l.org_id IN (SELECT o.id FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE u.platform_role IS NULL)`;
+    const out = deleteLeads(conn, where, []);
+    conn.prepare('INSERT INTO audit_log (at, actor_user_id, action, target, meta_json) VALUES (?,?,?,?,?)')
+      .run(iso(), actor.id, 'OWNER_ALL_CRM_DATA_DELETED', 'all-customers', JSON.stringify(out));
+    return out;
+  });
+}
+
+// The whole Master Cold database (imported/synced investors and their transactions) and
+// its import history. Customers' CRM copies stay with them but lose the link to the
+// deleted master record.
+export function deleteAllInvestorData({ actor, confirm }) {
+  confirmed(confirm, CONFIRM.INVESTORS_ALL);
+  return tx((conn) => {
+    const transactions = conn.prepare('DELETE FROM investor_transaction').run().changes;
+    conn.prepare('UPDATE crm_contact SET investor_id = NULL WHERE investor_id IS NOT NULL').run();
+    conn.prepare('DELETE FROM record_acquisition_grant').run();
+    const investors = conn.prepare('DELETE FROM investor_contact').run().changes;
+    const jobs = conn.prepare('DELETE FROM source_import_job').run().changes;
+    conn.prepare('INSERT INTO audit_log (at, actor_user_id, action, target, meta_json) VALUES (?,?,?,?,?)')
+      .run(iso(), actor.id, 'OWNER_ALL_INVESTOR_DATA_DELETED', 'master-cold', JSON.stringify({ investors, transactions, jobs }));
+    return { investors, transactions, import_jobs: jobs };
+  });
 }

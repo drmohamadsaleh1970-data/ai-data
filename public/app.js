@@ -657,34 +657,79 @@ const statusBadge = (s) => (s === 'CONNECTED' ? `<span class="badge ok"><span cl
 
 const STAGES = ['NEW', 'ASSIGNED', 'CONTACT_ATTEMPTED', 'CONTACTED', 'QUALIFIED', 'INTERESTED', 'VIEWING_SCHEDULED', 'VIEWED', 'NEGOTIATION', 'BOOKING', 'CONTRACT', 'CLOSED_WON', 'CLOSED_LOST', 'NO_RESPONSE', 'ON_HOLD'];
 
+const tagChips = (tags) => (tags ? tags.split(',').map((x) => `<span class="badge" style="background:var(--gold-soft)">#${esc(x)}</span>`).join(' ') : '');
+const dueLabel = (iso) => { if (!iso) return ''; const d = new Date(iso); const late = d < new Date(); return `<span class="small" style="${late ? 'color:var(--bad);font-weight:600' : ''}">${late ? '⚠ ' : ''}${fmtDT(iso)}</span>`; };
+
 async function viewCrm(parts, query) {
   if (parts[0] === 'lead') return viewLead(parts[1]);
   const view = query.view || 'list';
-  const qs = new URLSearchParams(Object.fromEntries(Object.entries({ source: query.source, stage: query.stage, q: query.q }).filter(([, v]) => v))).toString();
-  const tabs = `<div class="tabs">${['list', 'pipeline', 'tasks'].map((v) => `<a class="${view === v ? 'on' : ''}" href="#/crm?view=${v}${query.source ? '&source=' + query.source : ''}">${t(v === 'list' ? 'leads' : v)}</a>`).join('')}</div>`;
+  const filters = { source: query.source, stage: query.stage, q: query.q, assigned: query.assigned, tag: query.tag, overdue: query.overdue };
+  const qs = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v))).toString();
+  const tabNames = { list: t('leads'), pipeline: 'Pipeline', tasks: 'My day', templates: 'Templates' };
+  const tabs = `<div class="tabs">${Object.entries(tabNames).map(([v, label]) => `<a class="${view === v ? 'on' : ''}" href="#/crm?view=${v}${query.source ? '&source=' + query.source : ''}">${esc(label)}</a>`).join('')}</div>`;
+  const managers = can('crm.all');
+  const members = managers && ['list', 'pipeline'].includes(view) ? (await GET('/api/org/members')).members : [];
   let body = '';
   if (view === 'tasks') {
     const tasks = await GET('/api/crm/tasks');
-    body = `<div class="table-wrap"><table><thead><tr><th></th><th>${t('name')}</th><th>Task</th><th>${t('due')}</th><th></th></tr></thead><tbody>${tasks.map((x) => `<tr><td>${srcBadge(x.source_type)}</td><td><a href="#/crm/lead/${x.lead_id}"><b>${esc(x.full_name)}</b></a></td><td>${esc(x.title)}</td><td style="${new Date(x.due_at) < new Date() ? 'color:var(--bad);font-weight:700' : ''}">${fmtDT(x.due_at)}</td><td><button class="btn sm" data-act="task-done" data-id="${x.id}">${t('done')}</button></td></tr>`).join('') || '<tr><td colspan="5" class="empty">✓</td></tr>'}</tbody></table></div>`;
+    const now = new Date(); const endToday = new Date(now); endToday.setHours(23, 59, 59, 999);
+    const groups = [
+      ['Overdue', tasks.filter((x) => new Date(x.due_at) < now), 'bad'],
+      ['Today', tasks.filter((x) => new Date(x.due_at) >= now && new Date(x.due_at) <= endToday), 'gold'],
+      ['Upcoming', tasks.filter((x) => new Date(x.due_at) > endToday), ''],
+    ];
+    body = `<div class="grid g3" style="margin-bottom:16px">${groups.map(([n, l, c]) => `<div class="card"><div class="stat"><span class="l">${n}</span><span class="v" style="${c === 'bad' && l.length ? 'color:var(--bad)' : ''}">${l.length}</span></div></div>`).join('')}</div>
+      ${groups.map(([n, list]) => `<div class="card" style="margin-bottom:16px"><h3>${n} (${list.length})</h3>${list.map((x) => `<div class="row" style="border-top:1px solid var(--line);padding:10px 0;gap:10px;flex-wrap:wrap">
+        ${srcBadge(x.source_type)}<div style="flex:1;min-width:200px"><a href="#/crm/lead/${x.lead_id}"><b>${esc(x.full_name)}</b></a> · ${esc(x.title)}<br>${dueLabel(x.due_at)} <span class="badge">${esc(human(x.stage))}</span></div>
+        ${x.phone ? `<a class="btn sm" href="#/crm/lead/${x.lead_id}">📞 Open</a>` : ''}
+        <button class="btn sm" data-act="task-snooze" data-id="${x.id}">Snooze 1 day</button><button class="btn sm primary" data-act="task-done" data-id="${x.id}">✓ Done</button></div>`).join('') || '<div class="empty">Nothing here.</div>'}</div>`).join('')}`;
+  } else if (view === 'templates') {
+    const list = await GET('/api/crm/templates');
+    body = `<div class="grid g2" style="align-items:start">
+      <div class="card"><h3>Message templates</h3><p class="small muted" style="margin-top:0">Use them from a lead's page: {name}, {agent}, {area} and {company} are filled in automatically, then WhatsApp or email opens with the text ready.</p>
+        ${list.map((x) => `<div style="border-top:1px solid var(--line);padding:10px 0"><div class="row"><b>${esc(x.name)}</b><span class="badge">${esc(x.channel === 'WHATSAPP' ? 'WhatsApp' : 'Email')}</span><span class="badge">${esc(x.language.toUpperCase())}</span>${x.custom ? '' : '<span class="small muted">built-in</span>'}<div class="spacer"></div>${x.custom && can('members.manage') ? `<button class="btn sm ghost" data-act="template-delete" data-id="${x.id}">Delete</button>` : ''}</div>
+          <div class="small" style="white-space:pre-wrap;margin-top:4px" ${x.language === 'ar' ? 'dir="rtl"' : ''}>${esc(x.body)}</div></div>`).join('')}</div>
+      ${can('members.manage') ? `<form class="card grid" data-form="template-create" style="gap:10px"><h3>New template</h3>
+        <label class="field">Name<input type="text" name="name" required maxlength="80" placeholder="e.g. Off-plan launch invite"></label>
+        <div class="grid g2"><label class="field">Channel<select name="channel"><option value="WHATSAPP">WhatsApp</option><option value="EMAIL">Email</option></select></label>
+        <label class="field">Language<select name="language">${Object.entries(LANGS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label></div>
+        <label class="field">Text<textarea name="body" rows="5" required maxlength="2000" placeholder="Hello {name}, …"></textarea></label>
+        <button class="btn primary" style="justify-self:start">Save template</button></form>` : ''}</div>`;
   } else if (view === 'pipeline') {
     const leads = await GET('/api/crm/leads' + (qs ? '?' + qs : ''));
-    body = `<div class="kanban">${STAGES.map((st) => { const col = leads.filter((l) => l.stage === st); return `<div class="kcol"><h4>${esc(human(st))}<span>${col.length}</span></h4>${col.slice(0, 30).map((l) => `<a class="kcard" href="#/crm/lead/${l.id}"><div class="row">${srcBadge(l.source_type)}</div><b>${esc(l.full_name)}</b><span class="small muted">${esc(l.assignee_name || '—')}</span></a>`).join('')}</div>`; }).join('')}</div>`;
+    const open = leads.filter((l) => !['CLOSED_WON', 'CLOSED_LOST'].includes(l.stage));
+    const forecast = open.reduce((s, l) => s + (l.deal_value_aed || 0), 0);
+    const won = leads.filter((l) => l.stage === 'CLOSED_WON').reduce((s, l) => s + (l.deal_value_aed || 0), 0);
+    body = `<div class="grid g3" style="margin-bottom:12px"><div class="card"><div class="stat"><span class="l">Open leads</span><span class="v">${fmtNum(open.length)}</span></div></div>
+        <div class="card"><div class="stat"><span class="l">Open pipeline value</span><span class="v">${fmtAED(forecast)}</span></div></div>
+        <div class="card"><div class="stat"><span class="l">Won value</span><span class="v" style="color:var(--ok)">${fmtAED(won)}</span></div></div></div>
+      <p class="small muted">Drag a card to another column to change its stage.</p>
+      <div class="kanban">${STAGES.map((st) => { const col = leads.filter((l) => l.stage === st); const value = col.reduce((s, l) => s + (l.deal_value_aed || 0), 0); return `<div class="kcol" data-stage="${st}"><h4>${esc(human(st))}<span>${col.length}</span></h4>${value ? `<div class="small muted" style="margin:-4px 0 6px">${fmtAED(value)}</div>` : ''}
+        ${col.slice(0, 50).map((l) => `<a class="kcard" draggable="true" data-lead="${l.id}" href="#/crm/lead/${l.id}"><div class="row">${srcBadge(l.source_type)}${l.deal_value_aed ? `<span class="small"><b>${fmtAED(l.deal_value_aed)}</b></span>` : ''}</div><b>${esc(l.full_name)}</b><div class="small muted">${esc(l.assignee_name || '—')}</div>${l.next_task_due ? `<div>${dueLabel(l.next_task_due)}</div>` : ''}${l.tags ? `<div>${tagChips(l.tags)}</div>` : ''}</a>`).join('')}</div>`; }).join('')}</div>`;
   } else {
     const leads = await GET('/api/crm/leads' + (qs ? '?' + qs : ''));
-    body = `<form class="row" data-form="crm-filter" style="margin-bottom:12px">
-        <select name="source" style="width:auto"><option value="">${t('all_sources')}</option>${['COLD', 'HOT', 'OWNED', 'MANUAL'].map((s) => `<option ${query.source === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
-        <select name="stage" style="width:auto"><option value="">${t('stage')}: all</option>${STAGES.map((s) => `<option value="${s}" ${query.stage === s ? 'selected' : ''}>${esc(human(s))}</option>`).join('')}</select>
-        <input type="text" name="q" value="${esc(query.q || '')}" placeholder="${t('search')}…" style="max-width:240px"><button class="btn">${t('search')}</button>
+    body = `<form class="row" data-form="crm-filter" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <select name="source" style="width:auto" aria-label="Source"><option value="">${t('all_sources')}</option>${['COLD', 'HOT', 'OWNED', 'MANUAL'].map((s) => `<option ${query.source === s ? 'selected' : ''}>${s}</option>`).join('')}</select>
+        <select name="stage" style="width:auto" aria-label="Stage"><option value="">${t('stage')}: all</option>${STAGES.map((s) => `<option value="${s}" ${query.stage === s ? 'selected' : ''}>${esc(human(s))}</option>`).join('')}</select>
+        ${managers ? `<select name="assigned" style="width:auto" aria-label="Agent"><option value="">All agents</option>${members.map((m) => `<option value="${m.user_id}" ${String(query.assigned) === String(m.user_id) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>` : ''}
+        <input type="text" name="tag" value="${esc(query.tag || '')}" placeholder="#tag" style="max-width:120px" aria-label="Tag">
+        <label class="check small"><input type="checkbox" name="overdue" value="1" ${query.overdue ? 'checked' : ''}> Overdue follow-up</label>
+        <input type="text" name="q" value="${esc(query.q || '')}" placeholder="${t('search')}…" style="max-width:220px" aria-label="Search leads"><button class="btn">${t('search')}</button>
         ${can('crm.import') ? '<div class="spacer"></div><button type="button" class="btn" data-act="crm-import">Import leads form.xlsx</button>' : ''}</form>
-      <div class="table-wrap"><table><thead><tr><th>${t('source')}</th><th>${t('name')}</th><th>${t('phone')}</th><th>${t('stage')}</th><th>${t('assignee')}</th><th>First contact</th><th>${t('created')}</th></tr></thead>
-      <tbody>${leads.map((l) => `<tr class="click" data-href="#/crm/lead/${l.id}"><td>${srcBadge(l.source_type)}</td><td><b>${esc(l.full_name)}</b>${l.suppressed ? ' <span class="badge bad">DNC</span>' : ''}<br><span class="small muted">${esc(l.campaign_tag || l.source_detail)}</span></td><td class="small">${esc(l.phone || l.email || '—')}</td><td>${esc(human(l.stage))}</td><td>${esc(l.assignee_name || '—')}</td>
-        <td>${l.first_contacted_at ? `<span class="badge ok">${fmtDT(l.first_contacted_at)}</span>` : l.first_contact_due && new Date(l.first_contact_due) < new Date() ? '<span class="badge bad">SLA missed</span>' : `<span class="small muted">${t('due')} ${fmtDT(l.first_contact_due)}</span>`}</td><td class="small">${fmtDT(l.created_at)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No leads yet.</td></tr>'}</tbody></table></div>`;
+      <form class="card row" data-form="crm-bulk" style="gap:8px;margin-bottom:12px;padding:10px 14px;flex-wrap:wrap"><b class="small"><span id="bulk-count">0</span> selected</b>
+        <select name="stage" style="width:auto" aria-label="Set stage"><option value="">Set stage…</option>${STAGES.map((s) => `<option value="${s}">${esc(human(s))}</option>`).join('')}</select>
+        ${managers ? `<select name="assigned_user_id" style="width:auto" aria-label="Assign to"><option value="">Assign to…</option>${members.map((m) => `<option value="${m.user_id}">${esc(m.name)}</option>`).join('')}</select>` : ''}
+        <input type="text" name="add_tag" placeholder="Add tag" style="max-width:130px" aria-label="Add tag"><button class="btn sm primary">Apply to selected</button></form>
+      <div class="table-wrap"><table><thead><tr><th><input type="checkbox" data-change="lead-pick-all" aria-label="Select all leads"></th><th>${t('source')}</th><th>${t('name')}</th><th>${t('phone')}</th><th>${t('stage')}</th><th>${t('assignee')}</th><th class="num">Deal value</th><th>Next follow-up</th><th>First contact</th></tr></thead>
+      <tbody>${leads.map((l) => `<tr class="click" data-href="#/crm/lead/${l.id}"><td><input type="checkbox" class="lead-pick" data-change="lead-pick" value="${l.id}" aria-label="Select ${esc(l.full_name)}"></td><td>${srcBadge(l.source_type)}</td><td><b>${esc(l.full_name)}</b>${l.suppressed ? ' <span class="badge bad">DNC</span>' : ''}<br><span class="small muted">${esc(l.campaign_tag || l.source_detail)}</span> ${tagChips(l.tags)}</td><td class="small" dir="ltr">${esc(l.phone || l.email || '—')}</td>
+        <td><span class="badge">${esc(human(l.stage))}</span></td><td class="small">${esc(l.assignee_name || '—')}</td><td class="num small">${l.deal_value_aed ? fmtAED(l.deal_value_aed) : '—'}</td><td>${dueLabel(l.next_task_due) || '<span class="small muted">—</span>'}</td>
+        <td>${l.first_contacted_at ? `<span class="badge ok">${fmtDT(l.first_contacted_at)}</span>` : l.first_contact_due && new Date(l.first_contact_due) < new Date() ? '<span class="badge bad">SLA missed</span>' : `<span class="small muted">${t('due')} ${fmtDT(l.first_contact_due)}</span>`}</td></tr>`).join('') || `<tr><td colspan="9" class="empty">No leads match.</td></tr>`}</tbody></table></div>`;
   }
   return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('crm')}</h1></div><div class="spacer"></div>${tabs}</div>${body}`;
 }
 
 async function viewLead(id) {
-  const l = await GET(`/api/crm/leads/${id}`);
+  const [l, templates] = await Promise.all([GET(`/api/crm/leads/${id}`), GET('/api/crm/templates')]);
   const cold = l.source_type === 'COLD';
   const allowed = !l.suppressed && (cold ? l.marketing_permission === 'GRANTED' : l.consent?.contact === true);
   const wa = l.phone ? `https://wa.me/${l.phone.replace(/\D/g, '')}` : null;
@@ -692,6 +737,7 @@ async function viewLead(id) {
   return `<div class="page-head"><div><a href="#/crm" class="small muted">← ${t('crm')}</a><h1>${esc(l.full_name)}</h1><div class="row" style="margin-top:6px">${srcBadge(l.source_type)}<span class="badge">${esc(human(l.stage))}</span><span class="badge ${l.priority === 'HIGH' || l.priority === 'URGENT' ? 'hot' : ''}">${esc(human(l.priority))}</span></div></div></div>
   <div class="banner ${cold ? 'cold' : 'hot'}" style="margin-bottom:10px">${cold ? '❄ ' + t('cold_label') : '🔥 ' + t('hot_label')}</div>
   ${l.suppressed ? `<div class="banner bad" style="margin-bottom:10px">⛔ ${t('suppressed_warning')}</div>` : !allowed ? `<div class="banner warn" style="margin-bottom:10px">⚖ ${t('lawful_basis_warning')}</div>` : ''}
+  ${l.duplicates?.length ? `<div class="banner warn" style="margin-bottom:10px">⚠ Same mobile or email as ${l.duplicates.map((d) => `<a href="#/crm/lead/${d.id}"><b>${esc(d.full_name)}</b></a> (${esc(human(d.stage))}${d.assignee_name ? ', ' + esc(d.assignee_name) : ''})`).join(', ')}. Check before contacting twice.</div>` : ''}
   <div class="grid g3" style="align-items:start">
     <div class="card grid" style="gap:10px"><h3>Contact</h3>
       <div class="kv"><span class="k">${t('phone')}</span><span class="v" dir="ltr">${esc(l.phone || '—')}</span><span class="k">${t('email')}</span><span class="v" style="word-break:break-all">${esc(l.email || '—')}</span>
@@ -701,10 +747,20 @@ async function viewLead(id) {
       <p class="small muted">Opening your phone or WhatsApp does not record a contact. Log the actual outcome below.</p>
       <label class="field">${t('stage')}<select data-change="lead-stage" data-id="${l.id}">${STAGES.map((s) => `<option value="${s}" ${s === l.stage ? 'selected' : ''}>${esc(human(s))}</option>`).join('')}</select></label>
       ${can('crm.all') ? `<label class="field">${t('assignee')}<select data-change="lead-assign" data-id="${l.id}" data-current="${l.assigned_user_id ?? ''}" id="lead-assign"><option>…</option></select></label>` : ''}
+      <form class="grid" data-form="lead-deal" data-id="${l.id}" style="gap:8px;border-top:1px solid var(--line);padding-top:10px"><h3 style="margin:0">Deal</h3>
+        <div class="grid g2" style="gap:8px"><label class="field">Deal value (AED)<input type="number" name="deal_value_aed" min="0" step="1000" value="${l.deal_value_aed ?? ''}" placeholder="e.g. 2500000"></label>
+        <label class="field">Expected close<input type="date" name="expected_close" value="${esc(l.expected_close || '')}"></label></div>
+        <label class="field">Tags<input type="text" name="tags" value="${esc((l.tags || '').split(',').filter(Boolean).join(', '))}" placeholder="investor, off-plan, marina"></label>
+        <button class="btn sm" style="justify-self:start">Save deal</button></form>
       ${l.interest && !cold ? `<h3 style="margin-top:6px">Requested</h3><div class="kv">${Object.entries(l.interest).filter(([, v]) => v).map(([k, v]) => `<span class="k">${esc(human(k))}</span><span class="v">${esc(k === 'budget_max_aed' ? fmtAED(v) : v)}</span>`).join('')}</div>` : ''}
       ${l.consent ? `<h3 style="margin-top:6px">Consent evidence</h3><div class="kv"><span class="k">Contact</span><span class="v">${l.consent.contact ? '✓' : '—'}</span><span class="k">Marketing</span><span class="v">${l.consent.marketing ? '✓' : '—'}</span><span class="k">Notice</span><span class="v">${esc(l.consent.notice_version)}</span><span class="k">Captured</span><span class="v">${fmtDT(l.consent.captured_at)}</span></div>` : ''}
     </div>
-    <div class="card grid" style="gap:10px"><h3>${t('log_activity')}</h3>
+    <div class="card grid" style="gap:10px">
+      ${allowed && (l.phone || l.email) ? `<h3>Send a message</h3>
+        <div class="row" style="flex-wrap:wrap;gap:6px">${templates.filter((x) => (x.channel === 'WHATSAPP' && l.phone) || (x.channel === 'EMAIL' && l.email)).map((x) => `<button type="button" class="btn sm" data-act="use-template" data-name="${esc(l.full_name.split(' ')[0])}" data-area="${esc(l.interest?.area || txns[0]?.area || '')}" data-tpl="${esc(JSON.stringify(x))}">${esc(x.name)}</button>`).join('')}</div>
+        <textarea id="tpl-text" rows="4" placeholder="Pick a template above, edit if needed" aria-label="Message text"></textarea>
+        <div class="row"><button type="button" class="btn sm primary" id="tpl-send" data-act="send-template" data-phone="${esc((l.phone || '').replace(/\D/g, ''))}" data-email="${esc(l.email || '')}">Open in WhatsApp</button><span class="small muted">Sending is your action; log the outcome below.</span></div>` : ''}
+      <h3>${t('log_activity')}</h3>
       <form class="grid" data-form="lead-activity" data-id="${l.id}" style="gap:8px">
         <select name="type"><option value="NOTE">${t('add_note')}</option><option value="CONTACT_ATTEMPT">Contact attempt (no answer)</option>${!l.suppressed ? '<option value="CALL_LOGGED">Call — conversation held</option><option value="WHATSAPP_LOGGED">WhatsApp — conversation held</option><option value="EMAIL_LOGGED">Email exchanged</option>' : ''}<option value="MEETING">Meeting</option><option value="VIEWING">Viewing</option></select>
         <textarea name="body" rows="3" required maxlength="4000" placeholder="What happened?"></textarea><button class="btn primary">${t('log_activity')}</button></form>
@@ -816,11 +872,12 @@ async function viewSettings() {
 // ---------------------------------------------------------------------------------
 // Owner console
 // ---------------------------------------------------------------------------------
-async function viewOwner([sub = 'dashboard']) {
+async function viewOwner([sub = 'dashboard', ...rest]) {
   if (sub === 'finance' || sub === 'approvals') return ownerApprovals();
   if (!isOwner() && sub !== 'dashboard') return '<div class="banner bad">Platform owner only.</div>';
   if (sub === 'source') return ownerSource();
   if (sub === 'data') return ownerData();
+  if (sub === 'org') return ownerOrg(rest[0]);
   if (sub === 'hot') return ownerHot();
   if (sub === 'governance') return ownerGovernance();
   if (sub === 'audit') return ownerAudit();
@@ -837,7 +894,9 @@ async function viewOwner([sub = 'dashboard']) {
     <div class="card"><div class="stat"><span class="l">Overdue / suspended</span><span class="v" style="color:var(--bad)">${d.overdue.length}</span></div></div>
     <div class="card"><div class="stat"><span class="l">Investor records</span><span class="v">${fmtNum(d.data.investors)}</span></div><p class="small muted">${fmtNum(d.data.transactions)} transactions · ${fmtNum(d.data.approved)} approved · ${fmtNum(d.data.pending)} pending review · ${fmtNum(d.data.suppressed)} suppressed</p></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>Organizations</h3><div class="table-wrap"><table><thead><tr><th>Organization</th><th>Owner</th><th class="num">Members</th><th>${t('plan')}</th><th>${t('status')}</th><th>${t('renews')}</th></tr></thead><tbody>${d.organizations.map((o) => `<tr><td><b>${esc(o.name)}</b> <span class="badge">${esc(o.kind)}</span></td><td class="small">${esc(o.owner_email)}</td><td class="num">${o.members}</td><td>${esc(human(o.active_plan || '—'))}</td><td><span class="badge ${o.active_plan ? 'ok' : 'warn'}">${esc(human(o.status))}</span> <span class="small muted">${esc(human(o.provider || ''))}</span></td><td>${fmtDate(o.renews_or_ends)}</td></tr>`).join('')}</tbody></table></div></div>
+  <div class="card" style="margin-top:16px"><h3>Organizations</h3><div class="table-wrap"><table><thead><tr><th>Organization</th><th>Owner</th><th class="num">Members</th><th>${t('plan')}</th><th>${t('status')}</th><th>${t('renews')}</th></tr></thead><tbody>${d.organizations.map((o) => `<tr class="click" data-href="#/owner/org/${o.id}"><td><a href="#/owner/org/${o.id}"><b>${esc(o.name)}</b></a> <span class="badge">${esc(o.kind)}</span></td><td class="small">${esc(o.owner_email)}</td><td class="num">${o.members}</td><td>${esc(human(o.active_plan || '—'))}</td><td><span class="badge ${o.active_plan ? 'ok' : 'warn'}">${esc(human(o.status))}</span> <span class="small muted">${esc(human(o.provider || ''))}</span></td><td>${fmtDate(o.renews_or_ends)}</td></tr>`).join('')}</tbody></table></div></div>
+  <p class="small muted" style="margin-top:6px">Open an organization to set each user's daily limit or delete its CRM data.</p>
+  ${isOwner() ? dangerZone([{ act: 'owner-delete-all-crm', title: 'Delete all customers’ CRM data', text: 'Removes every lead, contact, note and follow-up from every customer account (your own owner CRM is kept). Payments, invoices and the audit log are kept.' }]) : ''}
   <div class="card" style="margin-top:16px"><h3>Cold usage by day</h3><div class="table-wrap"><table><tbody>${d.cold_usage_today.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.local_day)}</td><td class="num">${u.committed_used} / ${u.plan_limit}</td></tr>`).join('') || '<tr><td class="empty">—</td></tr>'}</tbody></table></div></div>`;
 }
 
@@ -881,6 +940,45 @@ function showActivationLink(r, reissued = false) {
       <button class="btn primary" data-act="close-refresh">${t('close')}</button></div>`);
 }
 
+// Irreversible actions, kept at the bottom of a page in their own red box.
+function dangerZone(items) {
+  return `<div class="card" style="margin-top:16px;border:1px solid var(--bad)"><h3 style="color:var(--bad);margin-top:0">Danger zone</h3>
+    ${items.map((x) => `<div class="row" style="gap:12px;border-top:1px solid var(--line);padding:10px 0;flex-wrap:wrap"><div style="flex:1;min-width:240px"><b>${esc(x.title)}</b><div class="small muted">${esc(x.text)}</div></div>
+      <button class="btn" style="border-color:var(--bad);color:var(--bad)" data-act="${x.act}" ${x.data || ''}>${esc(x.title)}</button></div>`).join('')}</div>`;
+}
+
+// Typed confirmation for deletions: the exact phrase must be typed, then MFA.
+function confirmDelete({ title, text, phrase, run }) {
+  openModal(`<h2 style="color:var(--bad)">${esc(title)}</h2><p>${esc(text)}</p><p class="small"><b>This cannot be undone.</b> Type <b class="mono">${esc(phrase)}</b> to confirm.</p>
+    <input type="text" id="del-confirm" autocomplete="off" aria-label="Confirmation phrase" class="mono">
+    <div class="row"><button class="btn" id="del-go" disabled style="border-color:var(--bad);color:var(--bad)">${esc(title)}</button><button class="btn ghost" data-act="close">${t('cancel')}</button></div>`);
+  const input = document.getElementById('del-confirm');
+  const go = document.getElementById('del-go');
+  input.oninput = () => { go.disabled = input.value.trim().toUpperCase() !== phrase; };
+  go.onclick = async () => {
+    try {
+      const r = await withMfa(() => run(input.value));
+      closeModal();
+      toast(`Deleted ✓ ${Object.entries(r).filter(([, v]) => typeof v === 'number').map(([k, v]) => `${fmtNum(v)} ${human(k).toLowerCase()}`).join(' · ')}`);
+      state.owner.counts = null;
+      render();
+    } catch (e) { toast(errMsg(e), true); }
+  };
+}
+
+async function ownerOrg(id) {
+  const o = await GET(`/api/owner/orgs/${id}`);
+  return `<div class="page-head"><div><a href="#/owner" class="small muted">← ${t('owner_dashboard')}</a><h1>${esc(o.name)}</h1>
+      <div class="row" style="margin-top:6px"><span class="badge">${esc(o.kind)}</span><span class="small muted">${esc(o.owner_email)}</span>
+      ${o.plan ? `<span class="badge ok">${esc(o.plan.name)} · ${fmtNum(o.plan.daily_limit)} / day</span>` : '<span class="badge warn">No active plan</span>'}</div></div></div>
+  <div class="card"><h3>Users and daily limits</h3><p class="small muted" style="margin-top:0">The account's plan limit is shared by all users. A personal limit caps one user inside it; leave empty for no personal limit.</p>
+    <div class="table-wrap"><table><thead><tr><th>${t('name')}</th><th>Mobile</th><th>${t('email')}</th><th>${t('role')}</th><th class="num">Leads</th><th>Daily limit (used today)</th><th></th></tr></thead><tbody>
+    ${o.members.map((m) => `<tr><td><b>${esc(m.name)}</b></td><td class="small mono">${esc(m.phone || '—')}</td><td class="small">${esc(m.email)}</td><td><span class="badge">${esc(human(m.role))}</span></td><td class="num">${fmtNum(m.leads)}</td>
+      <td><form class="row" data-form="owner-cap" data-org="${o.id}" data-id="${m.user_id}" style="gap:6px;flex-wrap:nowrap"><input type="number" name="daily_cap" min="0" ${o.plan ? `max="${o.plan.daily_limit}"` : ''} value="${m.daily_cap ?? ''}" placeholder="No limit" style="width:96px" aria-label="Daily limit for ${esc(m.name)}"><button class="btn sm">Save</button><span class="small muted">${fmtNum(m.used_today)} today</span></form></td>
+      <td>${m.leads ? `<button class="btn sm ghost" style="color:var(--bad)" data-act="owner-delete-user-crm" data-org="${o.id}" data-id="${m.user_id}" data-name="${esc(m.name)}" data-count="${m.leads}">Delete this user’s CRM data</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No users</td></tr>'}</tbody></table></div></div>
+  ${dangerZone([{ act: 'owner-delete-org-crm', data: `data-org="${o.id}" data-name="${esc(o.name)}" data-count="${o.crm.leads}"`, title: 'Delete this account’s CRM data', text: `Removes all ${fmtNum(o.crm.leads)} leads and ${fmtNum(o.crm.contacts)} contacts of ${o.name}, with their notes and follow-ups. Users, plan and payments are kept.` }])}`;
+}
+
 async function ownerData() {
   const o = state.owner;
   if (!o.counts) { const r = await POST('/api/owner/cold/search', { filter: o.filter, limit: 50 }); Object.assign(o, { results: r.results, counts: r.counts, cursor: r.next_cursor }); }
@@ -889,6 +987,7 @@ async function ownerData() {
   const sel = (k, label) => `<label class="field">${label}<select multiple name="${k}">${(opts?.[k] || []).map((v) => `<option ${o.filter[k]?.includes(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>`;
   return `<div class="page-head"><div><div class="kicker">${t('owner_console')} · unmasked</div><h1>${t('master_data')}</h1></div></div>
   <div class="banner bad" style="margin-bottom:16px">Owner-only view with full personal data. Every search and export is audited.</div>
+  ${dangerZone([{ act: 'owner-delete-investors', title: 'Delete all investor data', text: `Wipes the whole Master Cold database — ${fmtNum(o.counts?.total ?? 0)} investors in the current view, all imported/synced records, their transactions and the import history. Customers keep the copies already in their CRM.` }])}
   <div class="ih"><form class="card filters" data-form="owner-search">${sel('city', 'City') + sel('area', 'Area') + sel('property_type', 'Type')}
     <label class="field">Client role<select name="client_role"><option value="">All</option><option value="BUYER">Buyer</option><option value="SELLER">Seller</option></select></label>
     <div class="grid g2" style="gap:8px"><label class="field">Year from<input type="number" name="year_from" value="${o.filter.year_from ?? ''}"></label><label class="field">Year to<input type="number" name="year_to" value="${o.filter.year_to ?? ''}"></label></div>
@@ -1000,6 +1099,18 @@ const actions = {
     } catch (e) { toast(errMsg(e), true); }
   },
   'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); render(); },
+  'owner-delete-user-crm': (el) => confirmDelete({ title: 'Delete this user’s CRM data', phrase: 'DELETE CRM DATA',
+    text: `Removes the ${el.dataset.count} lead(s) assigned to ${el.dataset.name}, with notes and follow-ups.`,
+    run: (confirm) => POST(`/api/owner/orgs/${el.dataset.org}/crm/delete`, { user_id: Number(el.dataset.id), confirm }) }),
+  'owner-delete-org-crm': (el) => confirmDelete({ title: 'Delete this account’s CRM data', phrase: 'DELETE CRM DATA',
+    text: `Removes all ${el.dataset.count} lead(s) of ${el.dataset.name}, with contacts, notes and follow-ups.`,
+    run: (confirm) => POST(`/api/owner/orgs/${el.dataset.org}/crm/delete`, { confirm }) }),
+  'owner-delete-all-crm': () => confirmDelete({ title: 'Delete all customers’ CRM data', phrase: 'DELETE ALL CRM DATA',
+    text: 'Removes every lead, contact, note and follow-up from every customer account. Your own owner CRM, users, payments and the audit log are kept.',
+    run: (confirm) => POST('/api/owner/crm/delete-all', { confirm }) }),
+  'owner-delete-investors': () => confirmDelete({ title: 'Delete all investor data', phrase: 'DELETE ALL INVESTOR DATA',
+    text: 'Wipes the whole Master Cold database: every imported or synced investor, their transactions and the import history.',
+    run: (confirm) => POST('/api/owner/investors/delete-all', { confirm }) }),
   'signup-edit': () => { setSignupProfile(null); state.signinReturning = false; render(); },
   'signup-returning': () => { state.signinReturning = true; render(); },
   'signup-new': () => { state.signinReturning = false; render(); },
@@ -1029,6 +1140,25 @@ const actions = {
   'ih-transfer-sel': () => openTransfer({ mode: 'ids', ids: [...state.ih.selected] }),
   'ih-transfer-filter': () => openTransfer({ mode: 'filter', filter: state.ih.filter }),
   'task-done': async (el) => { await POST(`/api/crm/tasks/${el.dataset.id}/complete`); toast('✓'); render(); },
+  'task-snooze': async (el) => { const r = await POST(`/api/crm/tasks/${el.dataset.id}/snooze`, { days: 1 }); toast(`Moved to ${fmtDT(r.due_at)}`); render(); },
+  'template-delete': async (el) => { if (confirm('Delete this template?')) { await api('DELETE', `/api/crm/templates/${el.dataset.id}`); render(); } },
+  'use-template': (el) => {
+    const tpl = JSON.parse(el.dataset.tpl);
+    const text = tpl.body.replace(/\{(\w+)\}/g, (m, k) => ({ name: el.dataset.name, agent: state.me.user.name, area: el.dataset.area || 'Dubai', company: state.me.active_org?.name || 'AI-DATA' }[k] ?? m));
+    const box = document.getElementById('tpl-text');
+    box.value = text;
+    box.dataset.channel = tpl.channel;
+    box.dataset.subject = tpl.name;
+    document.getElementById('tpl-send').textContent = tpl.channel === 'EMAIL' ? 'Open in email' : 'Open in WhatsApp';
+  },
+  'send-template': (el) => {
+    const box = document.getElementById('tpl-text');
+    if (!box.value.trim()) return toast('Choose a template first', true);
+    const url = box.dataset.channel === 'EMAIL'
+      ? `mailto:${el.dataset.email}?subject=${encodeURIComponent(box.dataset.subject || '')}&body=${encodeURIComponent(box.value)}`
+      : `https://wa.me/${el.dataset.phone}?text=${encodeURIComponent(box.value)}`;
+    window.open(url, '_blank', 'noopener');
+  },
   'remove-member': async (el) => { if (confirm('Remove this member?')) { await api('DELETE', `/api/org/members/${el.dataset.id}`); render(); } },
   'pay-paypal': async (el) => { try { const r = await POST('/api/billing/paypal', { plan: el.dataset.plan }); if (r.approve_url) location.href = r.approve_url; } catch (e) { toast(errMsg(e), true); } },
   'pay-cash': async (el) => {
@@ -1108,6 +1238,22 @@ const forms = {
     toast('Profile saved ✓');
     go('#/');
   },
+  'crm-bulk': async (f) => {
+    const ids = [...document.querySelectorAll('.lead-pick:checked')].map((x) => Number(x.value));
+    if (!ids.length) return toast('Tick the leads first', true);
+    const body = { ids, stage: f.stage.value || undefined, add_tag: f.add_tag.value || undefined, assigned_user_id: f.assigned_user_id?.value ? Number(f.assigned_user_id.value) : undefined };
+    const r = await POST('/api/crm/leads/bulk', body);
+    toast(`${r.updated} lead(s) updated ✓`); render();
+  },
+  'template-create': async (f) => { await POST('/api/crm/templates', { name: f.name.value, channel: f.channel.value, language: f.language.value, body: f.body.value }); toast('Template saved ✓'); render(); },
+  'lead-deal': async (f) => {
+    await api('PATCH', `/api/crm/leads/${f.dataset.id}`, { deal_value_aed: f.deal_value_aed.value === '' ? null : Number(f.deal_value_aed.value), expected_close: f.expected_close.value || null, tags: f.tags.value });
+    toast('Saved ✓'); render();
+  },
+  'owner-cap': async (f) => {
+    await api('PATCH', `/api/owner/orgs/${f.dataset.org}/members/${f.dataset.id}`, { daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
+    toast('Daily limit saved ✓'); render();
+  },
   'member-cap': async (f) => {
     await api('PATCH', `/api/org/members/${f.dataset.id}`, { daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
     toast('Daily limit saved ✓'); render();
@@ -1167,6 +1313,32 @@ document.addEventListener('submit', (e) => {
   e.preventDefault();
   Promise.resolve(forms[f.dataset.form](f)).catch((err) => toast(errMsg(err), true));
 });
+// Pipeline: drag a card onto another stage column.
+document.addEventListener('dragstart', (e) => {
+  const card = e.target.closest?.('.kcard[data-lead]');
+  if (!card) return;
+  e.dataTransfer.setData('text/plain', card.dataset.lead);
+  e.dataTransfer.effectAllowed = 'move';
+  card.style.opacity = '.5';
+});
+document.addEventListener('dragend', (e) => { const card = e.target.closest?.('.kcard'); if (card) card.style.opacity = ''; });
+document.addEventListener('dragover', (e) => {
+  const col = e.target.closest?.('.kcol[data-stage]');
+  if (!col) return;
+  e.preventDefault();
+  document.querySelectorAll('.kcol.drop').forEach((c) => c !== col && c.classList.remove('drop'));
+  col.classList.add('drop');
+});
+document.addEventListener('drop', async (e) => {
+  const col = e.target.closest?.('.kcol[data-stage]');
+  if (!col) return;
+  e.preventDefault();
+  col.classList.remove('drop');
+  const id = e.dataTransfer.getData('text/plain');
+  if (!id) return;
+  try { await api('PATCH', `/api/crm/leads/${id}`, { stage: col.dataset.stage }); toast(`Moved to ${human(col.dataset.stage)} ✓`); render(); } catch (err) { toast(errMsg(err), true); }
+});
+
 document.addEventListener('change', async (e) => {
   const el = e.target.closest('[data-change]');
   if (!el) return;
@@ -1176,6 +1348,8 @@ document.addEventListener('change', async (e) => {
     if (el.dataset.change === 'owner-pick-all') { state.owner.results.forEach((r) => (el.checked ? state.owner.selected.add(r.id) : state.owner.selected.delete(r.id))); render(); }
     if (el.dataset.change === 'switch-org') { await POST('/api/me/active-org', { org_id: Number(el.value) }); state.ih.counts = null; state.ih.selected.clear(); go('#/overview'); }
     if (el.dataset.change === 'ih-preset' && el.value) { state.ih.filter = JSON.parse(el.value); await runSearch(false); render(); }
+    if (el.dataset.change === 'lead-pick-all') { document.querySelectorAll('.lead-pick').forEach((x) => { x.checked = el.checked; }); }
+    if (el.dataset.change === 'lead-pick-all' || el.classList.contains('lead-pick')) { const n = document.getElementById('bulk-count'); if (n) n.textContent = document.querySelectorAll('.lead-pick:checked').length; }
     if (el.dataset.change === 'lead-stage') { await api('PATCH', `/api/crm/leads/${el.dataset.id}`, { stage: el.value }); toast('✓'); render(); }
     if (el.dataset.change === 'lead-assign') { await api('PATCH', `/api/crm/leads/${el.dataset.id}`, { assigned_user_id: Number(el.value) }); toast('✓'); render(); }
   } catch (err) { toast(errMsg(err), true); }
