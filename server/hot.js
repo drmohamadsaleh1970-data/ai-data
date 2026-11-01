@@ -278,7 +278,9 @@ export function recordSearchEvent(body) {
   const clean = (v) => (v == null ? null : String(v).replace(/[^\p{L}\p{N} \-]/gu, '').slice(0, 60));
   const bedrooms = body.bedrooms === '' || body.bedrooms == null ? null : Number(body.bedrooms);
   const budget = body.budget_max_aed === '' || body.budget_max_aed == null ? null : Number(body.budget_max_aed);
-  const ev = { site: clean(body.site) || 'ai-home.world', event_type: body.event_type, city: clean(body.city), area: clean(body.area), property_type: clean(body.property_type),
+  // Site names keep their dots (ai-home.world); other fields keep letters, digits, spaces, hyphens.
+  const site = body.site == null ? '' : String(body.site).replace(/[^\p{L}\p{N} .\-]/gu, '').slice(0, 60);
+  const ev = { site: site || 'ai-home.world', event_type: body.event_type, city: clean(body.city), area: clean(body.area), property_type: clean(body.property_type),
     bedrooms: Number.isInteger(bedrooms) && bedrooms >= 0 && bedrooms <= 20 ? bedrooms : null, budget_max_aed: Number.isFinite(budget) && budget > 0 ? Math.round(budget) : null, purpose: clean(body.purpose) };
   getDb().prepare('INSERT INTO anonymous_search_event (site, event_type, city, area, property_type, bedrooms, budget_max_aed, purpose, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(ev.site, ev.event_type, ev.city, ev.area, ev.property_type, ev.bedrooms, ev.budget_max_aed, ev.purpose, iso());
