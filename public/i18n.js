@@ -82,6 +82,9 @@ const S = {
   last_reg: ["Last reg.", "آخر تسجيل", "Dernier enreg.", "Последняя рег.", "Son kayıt"],
   txns: ["Txns", "معاملات", "Trans.", "Сделки", "İşlem"],
   in_crm: ["In CRM", "في النظام", "Dans le CRM", "В CRM", "CRM’de"],
+  in_my_crm: ['In my CRM', 'في نظامي', 'Dans mon CRM', 'В моей CRM', 'CRM’imde'],
+  taken_by: ['Taken by', 'مُسند إلى', 'Attribué à', 'Назначен:', 'Atanan:'],
+  not_available: ['Already given to another agent — not available, do not contact', 'مُسند لوكيل آخر — غير متاح، لا تتواصل', 'Déjà attribué à un autre agent — indisponible, ne pas contacter', 'Уже передан другому агенту — недоступен, не связывайтесь', 'Başka bir danışmana verildi — müsait değil, iletişime geçmeyin'],
   // app
   today: ['Today', 'اليوم', 'Aujourd’hui', 'Сегодня', 'Bugün'],
   transferred: ['transferred', 'منقولة', 'transférés', 'перенесено', 'aktarıldı'],

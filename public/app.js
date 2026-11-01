@@ -519,7 +519,7 @@ async function viewOverview() {
 const srcBadge = (s) => (s === 'COLD' ? '<span class="badge cold">❄ COLD</span>' : s === 'HOT' ? '<span class="badge hot">🔥 HOT</span>' : `<span class="badge">${esc(s)}</span>`);
 const REASON_LABEL = {
   RIGHTS_PENDING_REVIEW: 'Rights pending review', SUPPRESSED_DO_NOT_CONTACT: 'Do-not-contact', TRANSFER_DISABLED_PENDING_LEGAL_APPROVAL: 'Transfers disabled pending legal approval',
-  DAILY_QUOTA_EXHAUSTED: 'Daily allowance used up', USER_DAILY_CAP_REACHED: 'Personal daily limit reached', NOT_FOUND: 'Record not found', NO_CHARGE_ALREADY_IN_CRM: 'Already in CRM — not charged',
+  DAILY_QUOTA_EXHAUSTED: 'Daily allowance used up', USER_DAILY_CAP_REACHED: 'Personal daily limit reached', NOT_FOUND: 'Record not found', NO_CHARGE_ALREADY_IN_CRM: 'Already in CRM — not charged', NO_CHARGE_PERSON_ALREADY_IN_CRM: 'Same person already in CRM (another lead) — linked, not charged', PERSON_ALREADY_IN_THIS_CRM: 'Already in this customer’s CRM',
 };
 
 async function viewInvestorHistory() {
@@ -570,7 +570,7 @@ async function viewInvestorHistory() {
             <td><b>${esc(r.area)}</b><br><span class="small muted">${esc(r.project || '')} · ${esc(r.master_developer || '')}</span></td>
             <td>${esc(r.property_type)}</td><td class="num">${fmtNum(r.size_m2)}</td><td class="num">${fmtAED(r.price_aed)}</td>
             <td>${fmtDate(r.last_registration_date)}</td><td class="num">${r.total_transactions}</td>
-            <td>${r.acquired ? `<span class="badge ok">${t('in_crm')}</span>` : r.blocked_reason ? `<span class="badge warn" title="${esc(r.blocked_reason)}">${esc(REASON_LABEL[r.blocked_reason] || human(r.blocked_reason))}</span>` : `<span class="badge cold">${t('eligible')}</span>`}</td></tr>`;
+            <td>${r.acquired ? (r.assigned_to_me ? `<span class="badge ok">${t('in_my_crm')}</span>` : `<span class="badge bad" title="${t('not_available')}">${t('taken_by')} ${esc(r.assigned_to || '—')}</span>`) : r.blocked_reason ? `<span class="badge warn" title="${esc(r.blocked_reason)}">${esc(REASON_LABEL[r.blocked_reason] || human(r.blocked_reason))}</span>` : `<span class="badge cold">${t('eligible')}</span>`}</td></tr>`;
         }).join('') || `<tr><td colspan="11" class="empty">No investors match these filters.</td></tr>`}</tbody>
       </table></div>
       ${ih.cursor ? `<div style="text-align:center;margin-top:12px"><button class="btn" data-act="ih-more">${t('load_more')}</button></div>` : ''}
@@ -676,7 +676,7 @@ async function viewMyCold() {
       <h3 style="margin-top:14px">Recent transfer jobs</h3>${usage.recent_jobs.slice(0, 6).map((j) => `<div class="small" style="padding:4px 0;border-top:1px solid var(--line)">#${j.id} · ${fmtDT(j.created_at)} · ${esc(j.user_name)} · ${j.mode} · <b>${j.charged}</b> charged / ${j.already_acquired} already / ${j.rejected} rejected</div>`).join('') || '<div class="muted">—</div>'}</div>
   </div>
   <div class="table-wrap"><table><thead><tr><th>${t('name')}</th><th>Transferred</th><th>By</th><th class="num">Historical txns</th><th>Marketing permission</th><th></th></tr></thead>
-  <tbody>${rows.map((r) => `<tr><td><b>${esc(r.full_name || '—')}</b></td><td>${fmtDT(r.granted_at)}</td><td>${esc(r.granted_by)}</td><td class="num">${r.transactions}</td><td><span class="badge ${r.marketing_permission === 'GRANTED' ? 'ok' : r.marketing_permission === 'DENIED' ? 'bad' : 'warn'}">${esc(human(r.marketing_permission))}</span></td><td>${r.lead_id ? `<a class="btn sm" href="#/crm/lead/${r.lead_id}">${t('open_in_crm')}</a>` : ''}</td></tr>`).join('') || `<tr><td colspan="6" class="empty">No records transferred yet. <a href="#/investor-history">${t('step_search')}</a></td></tr>`}</tbody></table></div>`;
+  <tbody>${rows.map((r) => `<tr><td><b>${esc(r.full_name || '—')}</b></td><td>${fmtDT(r.granted_at)}</td><td>${esc(r.granted_by)}</td><td class="num">${r.transactions}</td><td><span class="badge ${r.marketing_permission === 'GRANTED' ? 'ok' : r.marketing_permission === 'DENIED' ? 'bad' : 'warn'}">${esc(human(r.marketing_permission))}</span></td><td>${!r.lead_id ? '' : r.assigned_user_id === state.me.user.id || can('crm.all') ? `<a class="btn sm" href="#/crm/lead/${r.lead_id}">${t('open_in_crm')}</a>${r.assigned_user_id !== state.me.user.id && r.assigned_to ? `<br><span class="small muted">${esc(r.assigned_to)}</span>` : ''}` : `<span class="badge bad" title="${t('not_available')}">${t('taken_by')} ${esc(r.assigned_to || '—')}</span>`}</td></tr>`).join('') || `<tr><td colspan="6" class="empty">No records transferred yet. <a href="#/investor-history">${t('step_search')}</a></td></tr>`}</tbody></table></div>`;
 }
 
 // Drop-in lead form for any website; leads arrive through /api/public/inquiry.
@@ -695,7 +695,7 @@ async function viewHot() {
     <div class="card"><div class="stat"><span class="l">Billed Hot leads</span><span class="v">${fmtNum(h.ledger.length)}</span></div><p class="small muted">${fmtMoney(h.ledger.reduce((s, l) => s + l.amount_cents, 0))} total</p></div>
   </div>
   <div class="grid g2" style="margin-top:16px">
-    <div class="card"><h3>Live inquiries</h3><div class="table-wrap"><table><tbody>${h.recent.map((l) => `<tr class="click" data-href="#/crm/lead/${l.id}"><td><b>${esc(l.full_name)}</b><br><span class="small muted">${esc(l.source_detail)}</span></td><td>${esc(human(l.stage))}</td><td class="small">${fmtDT(l.created_at)}${!l.first_contacted_at && new Date(l.first_contact_due) < new Date() ? '<br><span class="badge bad">SLA missed</span>' : ''}</td></tr>`).join('') || '<tr><td class="empty">No Hot leads yet.</td></tr>'}</tbody></table></div></div>
+    <div class="card"><h3>Live inquiries</h3><div class="table-wrap"><table><tbody>${h.recent.map((l) => { const mine = l.assigned_user_id === state.me.user.id || can('crm.all'); return `<tr ${mine ? `class="click" data-href="#/crm/lead/${l.id}"` : ''}><td><b>${esc(l.full_name)}</b><br><span class="small muted">${esc(l.source_detail)}</span>${l.assignee_name ? `<br>${mine ? `<span class="small muted">${esc(l.assignee_name)}</span>` : `<span class="badge bad" title="${t('not_available')}">${t('taken_by')} ${esc(l.assignee_name)}</span>`}` : ''}</td><td>${esc(human(l.stage))}</td><td class="small">${fmtDT(l.created_at)}${!l.first_contacted_at && new Date(l.first_contact_due) < new Date() ? '<br><span class="badge bad">SLA missed</span>' : ''}</td></tr>`; }).join('') || '<tr><td class="empty">No Hot leads yet.</td></tr>'}</tbody></table></div></div>
     <div class="card"><h3>Capture leads on your own website</h3><p class="small muted">Leads from your own site key go straight to your CRM (free, your own data) with consent evidence. Paste this code into your website where the form should appear.</p>
       ${h.site_keys.length ? `<div class="code">${esc(snippet)}</div>` : '<div class="banner warn">No site key issued yet — ask AI-DATA support to register your domain.</div>'}
       <h3 style="margin-top:14px">Sources</h3>${h.sources.map((s) => `<div class="row" style="justify-content:space-between;padding:5px 0;border-top:1px solid var(--line)"><span>${esc(s.name)}</span>${statusBadge(s.status)}</div>`).join('')}</div>

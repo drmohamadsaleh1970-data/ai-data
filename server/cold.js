@@ -1,6 +1,7 @@
 import { getDb, tx } from './db.js';
 import { HttpError, iso, now, dubaiDay, audit, notify, flag, maskName, maskEmail, maskPhone } from './util.js';
 import { activeSubscription, quotaAccount } from './entitlements.js';
+import { currentHandler, findPerson, repeatOnLead } from './crm.js';
 
 const MAX_PAGE = 50;
 const MAX_IDS_PER_REQUEST = 1000;
@@ -85,7 +86,7 @@ export function eligibility(row, transferEnabled) {
   return null;
 }
 
-function presentRow(row, { acquired, ownerView, transferEnabled }) {
+function presentRow(row, { acquired, holder, userId, ownerView, transferEnabled }) {
   const restricted = row.rights_status !== 'APPROVED';
   return {
     id: row.id,
@@ -102,10 +103,13 @@ function presentRow(row, { acquired, ownerView, transferEnabled }) {
     rights_status: row.rights_status, identity_confidence: row.identity_confidence,
     marketing_permission: row.marketing_permission, quality_score: row.quality_score,
     acquired, blocked_reason: acquired ? null : eligibility(row, transferEnabled),
+    // Already given to an agent in this agency: not available to anyone else.
+    assigned_to: acquired ? holder?.name ?? null : null,
+    assigned_to_me: acquired && !!holder && holder.user_id === userId,
   };
 }
 
-export function search({ orgId, filter, cursor, limit = 25, ownerView = false }) {
+export function search({ orgId, userId = null, filter, cursor, limit = 25, ownerView = false }) {
   const db = getDb();
   const f = parseFilter(filter);
   const q = investorQuery(f);
@@ -122,6 +126,7 @@ export function search({ orgId, filter, cursor, limit = 25, ownerView = false })
   const hasMore = rows.length > pageSize;
   const page = rows.slice(0, pageSize);
   const acquiredSet = orgId ? acquiredIds(orgId, page.map((r) => r.id)) : new Set();
+  const holders = orgId ? holderMap(orgId, [...acquiredSet]) : new Map();
   const transferEnabled = flag('COLD_SUBSCRIBER_TRANSFER');
   const counts = db.prepare(`SELECT COUNT(*) AS total,
       SUM(CASE WHEN r.rights_status='APPROVED' AND r.suppressed=0 THEN 1 ELSE 0 END) AS eligible,
@@ -133,7 +138,7 @@ export function search({ orgId, filter, cursor, limit = 25, ownerView = false })
     filter: f,
     counts: { total: counts.total, eligible: counts.eligible ?? 0, restricted: counts.restricted ?? 0, already_acquired: counts.acquired ?? 0 },
     transfer_enabled: transferEnabled,
-    results: page.map((r) => presentRow(r, { acquired: acquiredSet.has(r.id), ownerView, transferEnabled })),
+    results: page.map((r) => presentRow(r, { acquired: acquiredSet.has(r.id), holder: holders.get(r.id), userId, ownerView, transferEnabled })),
     next_cursor: hasMore ? Buffer.from(`${last.last_date}|${last.id}`).toString('base64url') : null,
   };
 }
@@ -142,6 +147,17 @@ function acquiredIds(orgId, ids, conn = getDb()) {
   if (!ids.length) return new Set();
   return new Set(conn.prepare(`SELECT investor_id FROM record_acquisition_grant WHERE org_id = ? AND investor_id IN (${ids.map(() => '?').join(',')})`)
     .all(orgId, ...ids).map((r) => r.investor_id));
+}
+
+// Which agent holds each already-transferred investor (first open lead wins).
+function holderMap(orgId, ids, conn = getDb()) {
+  if (!ids.length) return new Map();
+  const rows = conn.prepare(`SELECT c.investor_id, l.assigned_user_id AS user_id, u.name FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id
+      LEFT JOIN platform_user u ON u.id = l.assigned_user_id
+    WHERE l.org_id = ? AND c.investor_id IN (${ids.map(() => '?').join(',')}) ORDER BY l.id`).all(orgId, ...ids);
+  const m = new Map();
+  for (const r of rows) if (!m.has(r.investor_id)) m.set(r.investor_id, { user_id: r.user_id, name: r.name });
+  return m;
 }
 
 export function filterOptions() {
@@ -184,6 +200,10 @@ function classify(conn, orgId, rows) {
   for (const r of rows) {
     if (r.missing) { out.blocked.push({ id: r.id, reason: 'NOT_FOUND' }); continue; }
     if (acquired.has(r.id)) { out.already.push(r); continue; }
+    // Duplicate prevention: the same person is already being worked in this CRM (e.g. a Hot
+    // inquiry with the same email/phone). Not sent again, not charged; linked to that lead.
+    const known = findPerson(conn, orgId, { email: r.email, phone: r.phone, investorId: r.id });
+    if (known?.lead_id) { out.already.push({ ...r, known }); continue; }
     const reason = eligibility(r, transferEnabled);
     if (reason) out.blocked.push({ id: r.id, reason });
     else out.newRecords.push(r);
@@ -298,6 +318,16 @@ export function transfer({ membership, selection, idempotencyKey, allowPartial =
       item.run(jobId, r.id, 'TRANSFERRED', null, 1, leadId);
     }
     for (const r of c.already) {
+      if (r.known) {
+        // Record the grant (so it shows as taken for every agent) and attach the history.
+        conn.prepare('INSERT INTO record_acquisition_grant (org_id, investor_id, job_id, granted_by, local_day, granted_at) VALUES (?,?,?,?,?,?)').run(orgId, r.id, jobId, userId, day, ts);
+        if (!r.known.investor_id) conn.prepare('UPDATE crm_contact SET investor_id = ?, updated_at = ? WHERE id = ?').run(r.id, ts, r.known.contact_id);
+        repeatOnLead(conn, { orgId, leadId: r.known.lead_id, userId, type: 'COLD_HISTORY_LINKED',
+          body: `Investor history matched this existing lead (job ${jobId}) — not re-sent, not charged.`,
+          notifyType: 'COLD_LEAD_ASSIGNED', notifyBody: `Investor history added to your existing lead: ${r.full_name}` });
+        item.run(jobId, r.id, 'ALREADY_ACQUIRED', 'NO_CHARGE_PERSON_ALREADY_IN_CRM', 0, r.known.lead_id);
+        continue;
+      }
       const lead = conn.prepare('SELECT l.id FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id WHERE c.org_id = ? AND c.investor_id = ? ORDER BY l.id LIMIT 1').get(orgId, r.id);
       item.run(jobId, r.id, 'ALREADY_ACQUIRED', 'NO_CHARGE_ALREADY_IN_CRM', 0, lead?.id ?? null);
     }
@@ -318,6 +348,8 @@ export function transfer({ membership, selection, idempotencyKey, allowPartial =
 
 function upsertColdIntoCrm(conn, { orgId, investor, assignee, dueAt, campaignTag, jobId, userId }) {
   const ts = iso();
+  // Someone in the agency already working this person (e.g. from a Hot inquiry) keeps them.
+  assignee = currentHandler(conn, orgId, { email: investor.email, phone: investor.phone, investorId: investor.id })?.user_id ?? assignee;
   const txns = conn.prepare(`SELECT source_txn_id, client_role, city, area, property_type, master_developer, project, size_m2, price_aed, registration_date
     FROM investor_transaction WHERE investor_id = ? ORDER BY registration_date`).all(investor.id);
   // Never overwrite an existing (possibly fresher, verified) CRM profile with historical
@@ -380,6 +412,8 @@ export function usage(orgId, day = dubaiDay()) {
 export function acquiredList(orgId) {
   return getDb().prepare(`SELECT g.investor_id, g.granted_at, u.name AS granted_by, c.id AS contact_id, c.full_name, c.marketing_permission,
       (SELECT l.id FROM crm_lead l WHERE l.contact_id = c.id ORDER BY l.id LIMIT 1) AS lead_id,
+      (SELECT l.assigned_user_id FROM crm_lead l WHERE l.contact_id = c.id ORDER BY l.id LIMIT 1) AS assigned_user_id,
+      (SELECT a.name FROM crm_lead l JOIN platform_user a ON a.id = l.assigned_user_id WHERE l.contact_id = c.id ORDER BY l.id LIMIT 1) AS assigned_to,
       (SELECT COUNT(*) FROM investor_transaction t WHERE t.investor_id = g.investor_id) AS transactions
     FROM record_acquisition_grant g JOIN platform_user u ON u.id = g.granted_by
     LEFT JOIN crm_contact c ON c.org_id = g.org_id AND c.investor_id = g.investor_id

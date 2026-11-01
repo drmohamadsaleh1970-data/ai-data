@@ -18,7 +18,56 @@ function scope(req) {
   return { sql: 'l.org_id = ? AND l.assigned_user_id = ?', params: [orgId, req.user.id] };
 }
 
-export function listLeads(req, { source, stage, q, assigned, tag, overdue } = {}) {
+// --- Duplicate prevention: one person = one record per organization ----------------------
+// Every way a person enters a CRM (Cold transfer, Hot inquiry, Hot pool allocation) asks
+// this first. A person is matched by investor record, email (any case) or phone (any
+// format). Returns null for a new person, otherwise their contact and, when they have one,
+// their open lead and the active agent holding it. Scoped to one organization only, so a
+// solo agent and an agency never block each other.
+export function findPerson(conn, orgId, { email, phone, investorId } = {}) {
+  const ors = [];
+  const params = [orgId];
+  if (investorId) { ors.push('c.investor_id = ?'); params.push(investorId); }
+  if (email) { ors.push('lower(c.email) = lower(?)'); params.push(String(email)); }
+  const phones = [...new Set([phone, normalizePhone(phone)].filter(Boolean).map(String))];
+  if (phones.length) { ors.push(`c.phone IN (${phones.map(() => '?').join(',')})`); params.push(...phones); }
+  if (!ors.length) return null;
+  const contact = conn.prepare(`SELECT c.id, c.investor_id FROM crm_contact c WHERE c.org_id = ? AND (${ors.join(' OR ')}) ORDER BY c.id LIMIT 1`).get(...params);
+  if (!contact) return null;
+  const open = conn.prepare(`SELECT l.id AS lead_id, l.assigned_user_id AS user_id, u.name, l.contact_id FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id
+      LEFT JOIN membership m ON m.org_id = l.org_id AND m.user_id = l.assigned_user_id AND m.status = 'ACTIVE'
+      LEFT JOIN platform_user u ON u.id = l.assigned_user_id
+    WHERE l.org_id = ? AND l.stage NOT IN ('CLOSED_WON','CLOSED_LOST') AND (${ors.join(' OR ')})
+    ORDER BY (m.user_id IS NULL), l.id LIMIT 1`).get(...params);
+  return {
+    contact_id: open?.contact_id ?? contact.id,
+    investor_id: contact.investor_id,
+    lead_id: open?.lead_id ?? null,
+    user_id: open?.user_id ?? null,
+    name: open?.name ?? null,
+  };
+}
+
+export const currentHandler = (conn, orgId, who) => {
+  const p = findPerson(conn, orgId, who);
+  return p?.lead_id && p.user_id ? { user_id: p.user_id, name: p.name } : null;
+};
+
+// The same person came in again: no new lead, no new call list entry. The new information
+// is logged on the lead they already have, and their agent is told.
+export function repeatOnLead(conn, { orgId, leadId, userId = null, type, body, notifyType, notifyBody }) {
+  const ts = iso();
+  const lead = conn.prepare('SELECT assigned_user_id FROM crm_lead WHERE id = ?').get(leadId);
+  conn.prepare('INSERT INTO lead_activity (org_id, lead_id, user_id, type, body, created_at) VALUES (?,?,?,?,?,?)').run(orgId, leadId, userId, type, body, ts);
+  conn.prepare('UPDATE crm_lead SET updated_at = ? WHERE id = ?').run(ts, leadId);
+  if (lead?.assigned_user_id) {
+    conn.prepare('INSERT INTO notification (user_id, org_id, type, body, link, created_at) VALUES (?,?,?,?,?,?)')
+      .run(lead.assigned_user_id, orgId, notifyType, notifyBody, `#/crm/lead/${leadId}`, ts);
+  }
+  return leadId;
+}
+
+export function listLeads(req,{ source, stage, q, assigned, tag, overdue } = {}) {
   const s = scope(req);
   const where = [s.sql];
   const params = [...s.params];
