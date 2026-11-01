@@ -288,3 +288,23 @@ html[dir=rtl] #toast { transform: translateX(50%); }
 .gfaq { border-top: 1px solid var(--line); padding: 10px 0; } .gfaq summary { cursor: pointer; font-weight: 600; } .gfaq p { margin: 8px 0 0; color: var(--ink-soft); }
 @media (max-width: 900px) { .gmap-wrap { grid-template-columns: 1fr; } .gdetail { position: static; } .glane { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .gstation, .gnode, .gdetail, .gprog-bar i { transition: none; animation: none; } }
+
+/* Lead generation */
+.lg-body { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.lg-qr { display: grid; gap: 4px; justify-items: center; }
+.lg-qr img { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 4px; }
+.lg-stats { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.lg-stats div { display: grid; gap: 2px; } .lg-stats b { font-variant-numeric: tabular-nums; }
+@media (max-width: 1300px) { .lg-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* Live leads */
+.live-list { display: grid; gap: 8px; }
+.live-row { display: grid; grid-template-columns: minmax(160px, 2fr) repeat(auto-fit, minmax(90px, auto)); gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.live-row.live-new { border-color: var(--hot); box-shadow: 0 0 0 3px var(--hot-bg); animation: livein .6s ease; }
+.live-row.live-late { border-inline-start: 4px solid var(--bad); }
+@keyframes livein { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+.live-clock { font-variant-numeric: tabular-nums; }
+.live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-inline-start: 4px; animation: livepulse 1.6s infinite; vertical-align: middle; }
+@keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(31,138,76,.5); } 100% { box-shadow: 0 0 0 8px rgba(31,138,76,0); } }
+@media (max-width: 680px) { .live-row { grid-template-columns: 1fr 1fr; } .live-main { grid-column: 1 / -1; } }
+@media (prefers-reduced-motion: reduce) { .live-row.live-new, .live-dot { animation: none; } }

@@ -74,12 +74,23 @@ const yes = (v) => v === true || ['true', 'yes', '1', 'on'].includes(String(v ??
 
 // Public first-party inquiry intake, routed by the site key (see siteKeys above).
 const rate = new Map();
+const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+export function cleanUtm(src = {}) {
+  const u = {};
+  for (const k of UTM_KEYS) if (src[k] != null && String(src[k]).trim()) u[k] = String(src[k]).trim().slice(0, 100);
+  return Object.keys(u).length ? u : null;
+}
+
 export function intakeInquiry(args) {
   const result = intakeInquiryTx(args);
-  // A new pool lead goes straight to the next customer with Hot credits when the owner
-  // has turned automatic distribution on. The visitor's answer never names that customer.
-  if (result.destination === 'AIHOME_HOT_POOL' && flag(AUTO_FLAG)) autoAllocate(result.pool_id);
+  afterIngest(result);
   return result;
+}
+
+// A new pool lead goes straight to the next customer with Hot credits when the owner has
+// turned automatic distribution on. The visitor's answer never names that customer.
+export function afterIngest(result) {
+  if (result?.destination === 'AIHOME_HOT_POOL' && flag(AUTO_FLAG)) autoAllocate(result.pool_id);
 }
 
 function intakeInquiryTx({ siteKey, body, ip, origin }) {
@@ -97,40 +108,60 @@ function intakeInquiryTx({ siteKey, body, ip, origin }) {
   const email = body.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email) ? String(body.email).toLowerCase() : null;
   if (!fullName || (!phone && !email)) throw new HttpError(400, 'NAME_AND_CONTACT_REQUIRED');
   if (!yes(body.consent_contact)) throw new HttpError(400, 'CONSENT_REQUIRED', 'The privacy notice must be accepted.');
+  // Campaign: named by its page (body.campaign) or implied by the campaign's own key.
+  let campaign = null;
+  if (body.campaign) {
+    campaign = db.prepare('SELECT * FROM lead_campaign WHERE slug = ?').get(String(body.campaign).slice(0, 80));
+    if (!campaign || campaign.site_key !== site.key) throw new HttpError(400, 'UNKNOWN_CAMPAIGN');
+  } else {
+    campaign = db.prepare('SELECT * FROM lead_campaign WHERE site_key = ?').get(site.key) || null;
+  }
+  if (campaign && campaign.status !== 'ACTIVE') throw new HttpError(410, 'CAMPAIGN_PAUSED', 'This campaign is not taking enquiries at the moment.');
   const eventId = String(body.client_event_id || `${phone || email}:${Math.floor(now().getTime() / 600_000)}`).slice(0, 120);
-  const consent = { contact: true, marketing: yes(body.consent_marketing), notice_version: String(body.notice_version || 'v1'), captured_at: iso(), channel: 'WEB_FORM', site: site.label };
+  const consent = { contact: true, marketing: yes(body.consent_marketing), notice_version: String(body.notice_version || 'v1'), captured_at: iso(), channel: campaign ? 'CAMPAIGN_PAGE' : 'WEB_FORM', site: site.label, ...(campaign ? { campaign: campaign.slug } : {}) };
   const interest = { area: body.area, property_type: body.property_type, bedrooms: body.bedrooms, budget_max_aed: body.budget_max_aed, message: String(body.message || '').slice(0, 1000) };
-  const ts = iso();
+  return ingest({
+    orgId: site.org_id, sourceCode: site.org_id ? 'AGENCY_WEB_FORM' : 'AIHOME_WEB_FORM', eventKey: `${site.key}:${eventId}`,
+    fullName, email, phone, language: body.language, interest, consent,
+    detail: campaign ? `CAMPAIGN:${campaign.slug}` : `AGENCY_WEB_FORM:${site.label}`,
+    campaignId: campaign?.id ?? null, utm: cleanUtm(body),
+  });
+}
 
+// One way in for every Hot lead (web form, campaign page, Meta Lead Ads): deduplicated by
+// source + event key; no organization = AI-DATA Hot pool, otherwise straight to that CRM.
+export function ingest({ orgId, sourceCode, eventKey, fullName, email, phone, language, interest, consent, detail, campaignId = null, utm = null }) {
+  const ts = iso();
   return tx((conn) => {
-    const sourceCode = site.org_id ? 'AGENCY_WEB_FORM' : 'AIHOME_WEB_FORM';
-    const seen = conn.prepare('SELECT id FROM webhook_receipt WHERE source_code = ? AND provider_event_id = ?').get(sourceCode, `${site.key}:${eventId}`);
+    const seen = conn.prepare('SELECT id FROM webhook_receipt WHERE source_code = ? AND provider_event_id = ?').get(sourceCode, eventKey);
     if (seen) return { duplicate: true };
     conn.prepare('INSERT INTO webhook_receipt (source_code, provider_event_id, received_at, processed_at, outcome) VALUES (?,?,?,?,?)')
-      .run(sourceCode, `${site.key}:${eventId}`, ts, ts, 'ACCEPTED');
+      .run(sourceCode, eventKey, ts, ts, 'ACCEPTED');
     conn.prepare('UPDATE hot_lead_source SET last_event_at = ? WHERE code = ?').run(ts, sourceCode);
-    if (!site.org_id) {
-      const id = Number(conn.prepare(`INSERT INTO hot_lead_pool (source_code, provider_event_id, full_name, email, phone, preferred_language, interest_json, consent_json, received_at)
-        VALUES (?,?,?,?,?,?,?,?,?)`).run(sourceCode, `${site.key}:${eventId}`, fullName, email, phone, body.language ?? null, JSON.stringify(interest), JSON.stringify(consent), ts).lastInsertRowid);
+    if (!orgId) {
+      const id = Number(conn.prepare(`INSERT INTO hot_lead_pool (source_code, provider_event_id, full_name, email, phone, preferred_language, interest_json, consent_json, received_at, campaign_id, utm_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(sourceCode, eventKey, fullName, email, phone, language ?? null, JSON.stringify(interest), JSON.stringify(consent), ts, campaignId, utm ? JSON.stringify(utm) : null).lastInsertRowid);
       return { accepted: true, destination: 'AIHOME_HOT_POOL', pool_id: id };
     }
-    const leadId = createHotLead(conn, { orgId: site.org_id, fullName, email, phone, language: body.language, interest, consent, detail: `AGENCY_WEB_FORM:${site.label}` });
+    const leadId = createHotLead(conn, { orgId: Number(orgId), fullName, email, phone, language, interest, consent, detail, campaignId, utm });
     return { accepted: true, destination: 'AGENCY_CRM', lead_id: leadId };
   });
 }
 
-function createHotLead(conn, { orgId, fullName, email, phone, language, interest, consent, detail }) {
+function createHotLead(conn, { orgId, fullName, email, phone, language, interest, consent, detail, campaignId = null, utm = null }) {
   const ts = iso();
   const org = conn.prepare('SELECT * FROM organization WHERE id = ?').get(orgId);
   // Round-robin across agents; falls back to the organization owner.
   const agents = conn.prepare("SELECT user_id FROM membership WHERE org_id = ? AND role='AGENT' AND status='ACTIVE' ORDER BY user_id").all(orgId);
   const n = conn.prepare("SELECT COUNT(*) AS n FROM crm_lead WHERE org_id = ? AND source_type='HOT'").get(orgId).n;
-  const assignee = agents.length ? agents[n % agents.length].user_id : org.owner_user_id;
+  const assignee = agents.length ? agents[Number(n) % agents.length].user_id : org.owner_user_id;
+  const campaignName = campaignId ? conn.prepare('SELECT name FROM lead_campaign WHERE id = ?').get(campaignId)?.name ?? null : null;
   const cid = Number(conn.prepare(`INSERT INTO crm_contact (org_id, full_name, email, phone, preferred_language, source_type, marketing_permission, created_at, updated_at)
     VALUES (?,?,?,?,?,'HOT',?,?,?)`).run(orgId, fullName, email, phone, language ?? null, consent.marketing ? 'GRANTED' : 'UNKNOWN', ts, ts).lastInsertRowid);
   const due = new Date(Date.parse(ts) + org.first_contact_sla_minutes_hot * 60_000).toISOString();
-  const leadId = Number(conn.prepare(`INSERT INTO crm_lead (org_id, contact_id, source_type, source_detail, provenance_note, stage, assigned_user_id, priority, interest_json, consent_json, first_contact_due, created_at, updated_at)
-    VALUES (?,?,'HOT',?,?,'NEW',?,'HIGH',?,?,?,?,?)`).run(orgId, cid, detail, 'Current inquiry submitted by the person with recorded consent', assignee, JSON.stringify(interest), JSON.stringify(consent), due, ts, ts).lastInsertRowid);
+  const leadId = Number(conn.prepare(`INSERT INTO crm_lead (org_id, contact_id, source_type, source_detail, provenance_note, stage, assigned_user_id, priority, interest_json, consent_json, first_contact_due, created_at, updated_at, campaign_id, utm_json, campaign_tag)
+    VALUES (?,?,'HOT',?,?,'NEW',?,'HIGH',?,?,?,?,?,?,?,?)`).run(orgId, cid, detail, 'Current inquiry submitted by the person with recorded consent', assignee, JSON.stringify(interest), JSON.stringify(consent), due, ts, ts,
+    campaignId, utm ? JSON.stringify(utm) : null, campaignName).lastInsertRowid);
   conn.prepare('INSERT INTO follow_up_task (org_id, lead_id, assignee_id, title, due_at, created_at) VALUES (?,?,?,?,?,?)').run(orgId, leadId, assignee, 'Respond to new inquiry', due, ts);
   conn.prepare('INSERT INTO notification (user_id, org_id, type, body, link, created_at) VALUES (?,?,?,?,?,?)').run(assignee, orgId, 'HOT_LEAD', `New inquiry: ${fullName} — respond within ${org.first_contact_sla_minutes_hot} min`, `#/crm/lead/${leadId}`, ts);
   return leadId;
@@ -157,7 +188,7 @@ function allocateIn(conn, { actorId, poolId, orgId, rule, method }) {
   const ent = conn.prepare("SELECT * FROM hot_lead_entitlement WHERE org_id = ? AND status='ACTIVE' AND credits_used < credits_total ORDER BY id LIMIT 1").get(Number(orgId));
   if (!ent) throw new HttpError(402, 'NO_HOT_CREDITS');
   const consent = JSON.parse(lead.consent_json);
-  const leadId = createHotLead(conn, { orgId: Number(orgId), fullName: lead.full_name, email: lead.email, phone: lead.phone, language: lead.preferred_language, interest: JSON.parse(lead.interest_json), consent, detail: 'AIHOME_HOT_ALLOCATION' });
+  const leadId = createHotLead(conn, { orgId: Number(orgId), fullName: lead.full_name, email: lead.email, phone: lead.phone, language: lead.preferred_language, interest: JSON.parse(lead.interest_json), consent, detail: 'AIHOME_HOT_ALLOCATION', campaignId: lead.campaign_id ?? null, utm: lead.utm_json ? JSON.parse(lead.utm_json) : null });
   conn.prepare('UPDATE hot_lead_pool SET allocated_org_id = ?, allocated_at = ?, allocation_method = ? WHERE id = ?').run(Number(orgId), iso(), method, lead.id);
   conn.prepare('UPDATE hot_lead_entitlement SET credits_used = credits_used + 1 WHERE id = ?').run(ent.id);
   conn.prepare('INSERT INTO hot_lead_billing_ledger (org_id, pool_id, crm_lead_id, entitlement_id, amount_cents, currency, created_at) VALUES (?,?,?,?,?,?,?)')

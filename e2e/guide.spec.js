@@ -25,14 +25,14 @@ test('agency director: guide opens on their role, steps, progress and flow work'
 
   // Open a step; its "Go there" link points at the real page.
   await page.locator('.gstation', { hasText: 'Find investors' }).click();
-  await expect(page.locator('.gdetail')).toContainText('Step 4 of 8');
+  await expect(page.locator('.gdetail')).toContainText('Step 4 of 10');
   await expect(page.locator('.gdetail').getByRole('link', { name: 'Go there →' })).toHaveAttribute('href', '#/investor-history');
 
   // Mark done → progress, kept after a reload.
   await page.locator('.gdetail').getByLabel('Done').check();
-  await expect(page.locator('.gprog')).toContainText('1 / 8');
+  await expect(page.locator('.gprog')).toContainText('1 / 10');
   await page.reload();
-  await expect(page.locator('.gprog')).toContainText('1 / 8');
+  await expect(page.locator('.gprog')).toContainText('1 / 10');
   await expect(page.locator('.gstation').nth(3)).toHaveClass(/done/);
 
   // Next / Back.

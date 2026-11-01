@@ -36,8 +36,34 @@ Paste the code from step 1 where the form should appear (on ai-home.world, a lan
 
 The form asks for name, phone/WhatsApp, email, area, property type, bedrooms, budget and message, plus a required consent box and an optional marketing box. It includes a hidden anti-bot field and sends no cookies.
 
-## 3. Ad platforms: Meta (Facebook/Instagram), Google, TikTok, LinkedIn
-No direct connector is built yet. Use **Zapier** or **Make** to forward each new lead:
+## 3. Campaign pages (no website needed)
+**Lead generation** in the menu (owner, agencies and solo agents) creates a hosted page for a project, area or offer: `https://<portal>/c/<campaign>`.
+
+1. Fill in the name, main channel, headline, description, area, page language and your privacy-notice address. The owner also chooses where leads go: the **AI-DATA Hot pool** or one account's CRM. Agencies' and solo agents' pages always go to their own CRM.
+2. Share the page:
+   - **Tagged links**, one per place you post (Instagram, Facebook, Google, TikTok, WhatsApp, email, SMS). Each adds `?utm_source=…`, so every lead records where it came from.
+   - The **QR code** (Download QR) for flyers, boards and show stands; it is tagged `utm_source=qr`.
+   - **Share on WhatsApp** to send the page to contacts or a status.
+3. Each enquiry arrives as a 🔥 Hot lead with consent evidence, the campaign name and the source. **Pause** stops a page from taking enquiries; it then says the campaign is closed.
+4. Enter the **ad spend** to see the cost per lead and per deal won. Each campaign shows leads, contacted, qualified, won and leads by source.
+
+Any form or Zapier flow can also attribute leads: send `"campaign": "<campaign>"` with the campaign's own key, plus `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`.
+
+## 4. Live leads
+**Live leads** in the menu shows new Hot leads as they arrive, without reloading, with a countdown to the first-contact time (red when missed), the campaign and source, and who the lead is assigned to. Turn the sound on to hear new leads. Agents see their own leads, agency managers and solo agents their whole account, and the owner every account plus the AI-DATA Hot pool.
+
+## 5. Meta Lead Ads (Facebook / Instagram), built in
+Facebook and Instagram instant forms can send leads straight to the portal, without Zapier:
+
+1. In Vercel → Settings → Environment Variables add `META_APP_SECRET` (your Meta app's secret) and `META_VERIFY_TOKEN` (any long random text you choose). Redeploy.
+2. In your Meta app (developers.facebook.com) → **Webhooks** → **Page**: callback URL `https://<portal>/api/webhooks/meta`, verify token = `META_VERIFY_TOKEN`, subscribe to the **leadgen** field. Subscribe the app to each Page.
+3. In **Lead generation → Meta Lead Ads**, connect each Page: Page ID, a **Page access token** with the `leads_retrieval` permission, where its leads go (Hot pool or one account) and optionally a campaign. The token is stored encrypted; connecting asks for your authenticator code.
+4. Test with Meta's **Lead Ads Testing Tool**. The lead appears on Live leads, tagged `facebook` or `instagram` with the Meta campaign and ad names.
+
+Every webhook is checked against Meta's signature; repeated deliveries never create a second lead; if a lead cannot be read from Meta the portal asks Meta to retry and shows the error next to the Page. Meta instant forms must show your privacy policy; submitting the form is recorded as the request to be contacted, and marketing consent is never assumed.
+
+## 6. Other ad platforms: Google, TikTok, LinkedIn (and Meta via Zapier)
+Use **Zapier** or **Make** to forward each new lead:
 
 1. **Trigger:** *New lead* in Facebook Lead Ads, Google Ads lead forms, TikTok Lead Generation or LinkedIn Lead Gen Forms.
 2. **Action:** *Webhooks → POST*, with these settings:
@@ -65,7 +91,7 @@ No direct connector is built yet. Use **Zapier** or **Make** to forward each new
 - Always map the platform's **lead ID** to `client_event_id`, so a retried delivery is never stored twice.
 - Booleans may be sent as text (`"true"`, `"yes"`).
 
-## 4. Any other system (API)
+## 7. Any other system (API)
 ```bash
 curl -X POST https://ai-data-phi.vercel.app/api/public/inquiry \
   -H 'Content-Type: application/json' -H 'X-Site-Key: sk_xxxxxxxxxxxxxxxx' \
@@ -82,7 +108,7 @@ curl -X POST https://ai-data-phi.vercel.app/api/public/inquiry \
 | `403 ORIGIN_NOT_ALLOWED` | The key is limited to another website |
 | `429 RATE_LIMITED` | More than 10 leads per minute from one IP address |
 
-## 5. Selling pool leads to agencies
+## 8. Selling pool leads to agencies
 1. **Owner console → Hot pricing & pool → Pricing:** choose the model and price, then click **Save & approve pricing** (MFA required). Until then, checkout and allocation stay disabled.
 2. After an agency pays for Hot Leads, use **Grant Hot credits** to give it credits.
 3. Send leads to customers, automatically or by hand:
