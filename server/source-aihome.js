@@ -276,7 +276,7 @@ export function sourceStatus() {
     scheduled_sync_minutes: config.aihomeSource.syncMinutes || null,
     rights_approved: !!prov?.allows_subscriber_transfer,
     totals: prov
-      ? db.prepare(`SELECT COUNT(*) AS investors, SUM(rights_status='APPROVED') AS approved, SUM(identity_confidence='AMBIGUOUS') AS ambiguous,
+      ? db.prepare(`SELECT COUNT(*) AS investors, SUM(CASE WHEN rights_status='APPROVED' THEN 1 ELSE 0 END) AS approved, SUM(CASE WHEN identity_confidence='AMBIGUOUS' THEN 1 ELSE 0 END) AS ambiguous,
           (SELECT COUNT(*) FROM investor_transaction WHERE provenance_id = ?) AS transactions FROM investor_contact WHERE provenance_id = ?`).get(prov.id, prov.id)
       : { investors: 0, approved: 0, ambiguous: 0, transactions: 0 },
     jobs: db.prepare('SELECT j.*, u.email AS started_by_email FROM source_import_job j LEFT JOIN platform_user u ON u.id = j.started_by ORDER BY j.id DESC LIMIT 20').all(),
