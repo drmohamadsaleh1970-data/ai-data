@@ -878,8 +878,8 @@ async function viewBilling(_p, query) {
       <p class="small muted" style="margin:0">Your activation code was sent automatically. It works once, only for your account, until ${fmtDT(act.expires_at)}.</p>
       <div class="row" style="gap:10px;flex-wrap:wrap"><input type="text" name="code" value="${esc(act.code)}" aria-label="Activation code" class="mono" style="font-size:22px;letter-spacing:3px;max-width:220px;text-transform:uppercase"><button class="btn gold">Activate now</button></div>
     </form>` : ''}
-  ${!act && waiting.length ? `<div class="banner cold" style="margin-bottom:16px">⏳ Waiting for AI-DATA to confirm your payment (ref <b class="mono">${esc(waiting[0].reference)}</b>). As soon as it is confirmed you will get an activation code here automatically.</div>` : ''}
-  ${!act && !e.active ? `<form class="card row" data-form="activate-code" style="gap:10px;margin-bottom:16px;flex-wrap:wrap"><span class="small"><b>Have an activation code?</b></span><input type="text" name="code" placeholder="XXXX-XXXX" required aria-label="Activation code" class="mono" style="max-width:180px;text-transform:uppercase"><button class="btn">Activate</button></form>` : ''}
+  ${!act && waiting.length ? `<div class="banner cold" style="margin-bottom:16px">⏳ <b>Waiting for AI-DATA to confirm your payment.</b> Your payment reference is <b class="mono">${esc(waiting[0].reference)}</b> — quote it when you pay. This is <u>not</u> the activation code: once AI-DATA confirms the money has arrived, an 8-character activation code appears here automatically and in your notifications.</div>` : ''}
+  ${!act && !e.active && !waiting.length ? `<form class="card row" data-form="activate-code" style="gap:10px;margin-bottom:16px;flex-wrap:wrap"><span class="small"><b>Have an activation code?</b></span><input type="text" name="code" placeholder="XXXX-XXXX" required aria-label="Activation code" class="mono" style="max-width:180px;text-transform:uppercase"><button class="btn">Activate</button></form>` : ''}
   <div class="grid g2" style="align-items:start">
     <div class="card"><h3>Current Cold subscription</h3>
       ${e.active ? `<div class="kv"><span class="k">${t('plan')}</span><span class="v">${esc(e.plan_name)}</span><span class="k">${t('status')}</span><span class="v"><span class="badge ok">Active</span></span><span class="k">${t('renews')}</span><span class="v">${fmtDate(e.period_end)}</span><span class="k">Method</span><span class="v">${esc(human(e.provider))}</span></div>`
@@ -1340,6 +1340,7 @@ const forms = {
     toast('Invitation recorded ✓'); render();
   },
   'activate-code': async (f) => {
+    if (/^\s*AIH-/i.test(f.code.value)) return toast('That is your payment reference, not the activation code. The 8-character code arrives here automatically once AI-DATA confirms your payment.', true);
     try {
       await POST('/api/billing/activate', { code: f.code.value });
       await loadMe();
