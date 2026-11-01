@@ -225,3 +225,17 @@ html[dir=rtl] #toast { transform: translateX(50%); }
 .kv .k::first-letter { text-transform: uppercase; }
 
 .demo-strip { background: repeating-linear-gradient(45deg, var(--warn-bg), var(--warn-bg) 12px, transparent 12px, transparent 24px), var(--warn-bg); color: var(--warn); font-weight: 700; font-size: 12px; text-align: center; padding: 5px 10px; }
+
+/* CRM dashboard */
+.hbars { display: grid; gap: 7px; }
+.hbar { display: grid; grid-template-columns: minmax(90px, 140px) 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
+.hbar .l { color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hbar .track { height: 9px; border-radius: 9px; background: var(--muted-bg); overflow: hidden; }
+.hbar .track i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), #d9b56d); border-radius: 9px; }
+.hbar .v { font-weight: 700; font-variant-numeric: tabular-nums; text-align: end; white-space: nowrap; }
+.spark { display: flex; align-items: flex-end; gap: 4px; height: 56px; }
+.spark span { flex: 1; height: 100%; display: flex; align-items: flex-end; background: var(--muted-bg); border-radius: 4px; overflow: hidden; }
+.spark i { display: block; width: 100%; background: var(--gold); border-radius: 4px 4px 0 0; }
+.dash-insights ul { margin: 6px 0 0; padding-inline-start: 18px; }
+.dash-insights li { margin: 2px 0; }
+@media (max-width: 680px) { .hbar { grid-template-columns: 90px 1fr auto; } }

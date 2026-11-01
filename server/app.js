@@ -14,6 +14,7 @@ import * as billing from './billing.js';
 import * as crm from './crm.js';
 import * as hot from './hot.js';
 import * as owner from './owner.js';
+import * as dashboard from './dashboard.js';
 import * as source from './source-aihome.js';
 import { deliverQueued, emailConfigured } from './mail.js';
 
@@ -248,6 +249,8 @@ export function createApp(options = {}) {
   r.post('/crm/templates', requireOrgPermission('members.manage'), ok((req) => crm.createTemplate(req, req.body || {})));
   r.delete('/crm/templates/:id', requireOrgPermission('members.manage'), ok((req) => crm.deleteTemplate(req, req.params.id)));
   r.post('/crm/tasks/:id/complete', crmPerm, ok((req) => crm.completeTask(req, req.params.id)));
+  // Dashboard: agents see their own leads; managers see the organization (?agent= drills into one member).
+  r.get('/crm/dashboard', crmPerm, ok((req) => dashboard.dashboardFor(req, { days: req.query.days, agent: req.query.agent })));
   r.get('/crm/pipeline', crmPerm, ok((req) => ({ stages: crm.pipeline(req) })));
   r.post('/crm/import', requireOrgPermission('crm.import'), ok((req) => crm.importLeadsXlsx(req, { base64: req.body.file_base64, commit: req.body.commit === true, rightsConfirmed: req.body.rights_confirmed === true })));
   r.get('/reports', requireOrgPermission('reports.view'), ok((req) => crm.reports(req)));
@@ -286,6 +289,12 @@ export function createApp(options = {}) {
     res.download(f.file, f.name, { dotfiles: 'allow' });
   });
   r.get('/owner/orgs/:id', OWNER, ok((req) => owner.orgDetail(req.params.id)));
+  // Platform owner: monitor the CRM of every agency and solo agent (view + reassign/stage, all audited).
+  r.get('/owner/crm/overview', OWNER, ok((req) => dashboard.ownerOverview({ days: req.query.days })));
+  r.get('/owner/orgs/:id/crm/dashboard', OWNER, ok((req) => dashboard.ownerOrgDashboard({ actor: req.user, orgId: req.params.id, agent: req.query.agent, days: req.query.days })));
+  r.get('/owner/orgs/:id/crm/leads', OWNER, ok((req) => dashboard.ownerOrgLeads({ orgId: req.params.id, stage: req.query.stage, agent: req.query.agent, q: req.query.q })));
+  r.get('/owner/orgs/:id/crm/leads/:leadId', OWNER, ok((req) => dashboard.ownerLeadDetail({ actor: req.user, orgId: req.params.id, leadId: req.params.leadId })));
+  r.patch('/owner/orgs/:id/crm/leads/:leadId', OWNER, ok((req) => dashboard.ownerUpdateLead({ actor: req.user, orgId: req.params.id, leadId: req.params.leadId, stage: req.body?.stage, assigned_user_id: req.body?.assigned_user_id })));
   r.patch('/owner/orgs/:orgId/members/:userId', OWNER, ok((req) => owner.setUserCap({ actor: req.user, orgId: req.params.orgId, userId: req.params.userId, value: req.body?.daily_cap })));
   r.post('/owner/orgs/:orgId/crm/delete', OWNER, requireRecentMfa, ok((req) => owner.deleteCrmData({ actor: req.user, orgId: req.params.orgId, userId: req.body?.user_id || null, confirm: req.body?.confirm })));
   r.post('/owner/crm/delete-all', OWNER, requireRecentMfa, ok((req) => owner.deleteAllCrmData({ actor: req.user, confirm: req.body?.confirm })));

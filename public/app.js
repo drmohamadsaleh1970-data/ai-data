@@ -114,7 +114,7 @@ function setLang(l, persist = true) {
 }
 
 const APP_ROUTES = {
-  overview: viewOverview, 'investor-history': viewInvestorHistory, 'my-cold': viewMyCold, hot: viewHot, crm: viewCrm,
+  overview: viewOverview, dashboard: viewDashboard, 'investor-history': viewInvestorHistory, 'my-cold': viewMyCold, hot: viewHot, crm: viewCrm,
   team: viewTeam, reports: viewReports, billing: viewBilling, integrations: viewIntegrations, settings: viewSettings,
   onboarding: viewOnboarding, owner: viewOwner, activate: viewActivate, profile: viewProfile,
 };
@@ -180,6 +180,7 @@ function shell(name, parts, content) {
   if (org) {
     nav += `<div class="nav-group">${esc(org.name)}</div>`;
     nav += link('#/overview', 'overview', '◎', name === 'overview');
+    if (can('crm.all') || can('crm.own')) nav += link('#/dashboard', 'crm_dashboard', '▦', name === 'dashboard');
     if (can('cold.search')) nav += link('#/investor-history', 'investor_history', '❄', name === 'investor-history');
     if (can('cold.search')) nav += link('#/my-cold', 'my_cold', '▤', name === 'my-cold');
     if (can('hot.view')) nav += link('#/hot', 'hot_leads', '🔥', name === 'hot');
@@ -199,6 +200,7 @@ function shell(name, parts, content) {
     nav += link('#/owner', 'owner_dashboard', '◆', name === 'owner' && sub === 'dashboard');
     if (isOwner()) {
       nav += link('#/owner/source', 'data_source', '⇩', name === 'owner' && sub === 'source');
+      nav += link('#/owner/crm', 'crm_monitor', '▦', name === 'owner' && sub === 'crm');
       nav += link('#/owner/data', 'master_data', '⛁', name === 'owner' && sub === 'data');
       nav += link('#/owner/hot', 'hot_admin', '🔥', name === 'owner' && sub === 'hot');
       nav += link('#/owner/governance', 'governance', '⚖', name === 'owner' && sub === 'governance');
@@ -792,6 +794,13 @@ async function viewLead(id) {
         <label class="field">Expected close<input type="date" name="expected_close" value="${esc(l.expected_close || '')}"></label></div>
         <label class="field">Tags<input type="text" name="tags" value="${esc((l.tags || '').split(',').filter(Boolean).join(', '))}" placeholder="investor, off-plan, marina"></label>
         <button class="btn sm" style="justify-self:start">Save deal</button></form>
+      <form class="grid" data-form="lead-prefs" data-id="${l.id}" style="gap:8px;border-top:1px solid var(--line);padding-top:10px"><h3 style="margin:0">How to contact</h3>
+        <div class="grid g2" style="gap:8px">
+          <label class="field">Channel<select name="preferred_channel"><option value="">Not recorded</option>${['WHATSAPP', 'CALL', 'EMAIL', 'SMS'].map((x) => `<option value="${x}" ${l.preferred_channel === x ? 'selected' : ''}>${esc(human(x))}</option>`).join('')}</select></label>
+          <label class="field">Best time<select name="best_time"><option value="">Not recorded</option>${['MORNING', 'AFTERNOON', 'EVENING', 'ANY'].map((x) => `<option value="${x}" ${l.best_time === x ? 'selected' : ''}>${esc(human(x))}</option>`).join('')}</select></label>
+          <label class="field">Tone<select name="tone"><option value="">Not recorded</option>${['FORMAL', 'FRIENDLY'].map((x) => `<option value="${x}" ${l.tone === x ? 'selected' : ''}>${esc(human(x))}</option>`).join('')}</select></label>
+          <label class="field">Client language<select name="preferred_language"><option value="">Not recorded</option>${[['en', 'English'], ['ar', 'Arabic'], ['fr', 'French'], ['ru', 'Russian'], ['tr', 'Turkish'], ['hi', 'Hindi'], ['ur', 'Urdu'], ['zh', 'Chinese'], ['de', 'German'], ['fa', 'Persian']].map(([v, lbl]) => `<option value="${v}" ${l.preferred_language === v ? 'selected' : ''}>${lbl}</option>`).join('')}</select></label>
+        </div><button class="btn sm" style="justify-self:start">Save preferences</button></form>
       ${l.interest && !cold ? `<h3 style="margin-top:6px">Requested</h3><div class="kv">${Object.entries(l.interest).filter(([, v]) => v).map(([k, v]) => `<span class="k">${esc(human(k))}</span><span class="v">${esc(k === 'budget_max_aed' ? fmtAED(v) : v)}</span>`).join('')}</div>` : ''}
       ${l.consent ? `<h3 style="margin-top:6px">Consent evidence</h3><div class="kv"><span class="k">Contact</span><span class="v">${l.consent.contact ? '✓' : '—'}</span><span class="k">Marketing</span><span class="v">${l.consent.marketing ? '✓' : '—'}</span><span class="k">Notice</span><span class="v">${esc(l.consent.notice_version)}</span><span class="k">Captured</span><span class="v">${fmtDT(l.consent.captured_at)}</span></div>` : ''}
     </div>
@@ -803,7 +812,7 @@ async function viewLead(id) {
       <h3>${t('log_activity')}</h3>
       <form class="grid" data-form="lead-activity" data-id="${l.id}" style="gap:8px">
         <select name="type"><option value="NOTE">${t('add_note')}</option><option value="CONTACT_ATTEMPT">Contact attempt (no answer)</option>${!l.suppressed ? '<option value="CALL_LOGGED">Call — conversation held</option><option value="WHATSAPP_LOGGED">WhatsApp — conversation held</option><option value="EMAIL_LOGGED">Email exchanged</option>' : ''}<option value="MEETING">Meeting</option><option value="VIEWING">Viewing</option></select>
-        <textarea name="body" rows="3" required maxlength="4000" placeholder="What happened?"></textarea><button class="btn primary">${t('log_activity')}</button></form>
+        <textarea name="body" rows="3" required maxlength="4000" placeholder="What happened?"></textarea><input type="hidden" name="template_id" value=""><button class="btn primary">${t('log_activity')}</button></form>
       <h3>${t('schedule_followup')}</h3>
       <form class="grid" data-form="lead-task" data-id="${l.id}" style="gap:8px"><input type="text" name="title" required maxlength="300" placeholder="Follow-up"><input type="datetime-local" name="due_at" required><button class="btn">${t('schedule_followup')}</button></form>
       <h3>${t('tasks')}</h3>${l.tasks.map((x) => `<div class="row" style="justify-content:space-between;border-top:1px solid var(--line);padding:6px 0"><span class="${x.done_at ? 'muted' : ''}">${x.done_at ? '✓ ' : ''}${esc(x.title)}<br><span class="small muted">${fmtDT(x.due_at)}</span></span>${x.done_at ? '' : `<button class="btn sm" data-act="task-done" data-id="${x.id}">${t('done')}</button>`}</div>`).join('') || '<span class="muted">—</span>'}
@@ -811,6 +820,150 @@ async function viewLead(id) {
     <div class="card"><h3>${t('timeline')}</h3><div class="timeline">${l.activities.map((a) => `<div class="tl"><div><b>${esc(human(a.type))}</b> <span class="small muted">· ${esc(a.user_name || 'System')} · ${fmtDT(a.created_at)}</span><div class="small">${esc(a.body || '')}</div></div></div>`).join('') || '<span class="muted">—</span>'}</div></div>
   </div>
   ${txns.length ? `<div class="card" style="margin-top:16px"><h3>${t('transaction_history')} (${txns.length})</h3><div class="table-wrap"><table><thead><tr><th>Txn ID</th><th>Role</th><th>Area · Project</th><th>Type</th><th class="num">m²</th><th class="num">Price</th><th>Registered</th></tr></thead><tbody>${txns.map((x) => `<tr><td class="mono">${esc(x.source_txn_id)}</td><td>${esc(human(x.client_role))}</td><td>${esc(x.area)} · ${esc(x.project || '')}</td><td>${esc(x.property_type)}</td><td class="num">${fmtNum(x.size_m2)}</td><td class="num">${fmtAED(x.price_aed)}</td><td>${fmtDate(x.registration_date)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
+}
+
+// ---------------------------------------------------------------------------------
+// CRM dashboard (agencies, agents, solo agents) + owner CRM monitor
+// ---------------------------------------------------------------------------------
+const DASH_DAYS = [7, 30, 90];
+const ACT_LABEL = { CALL_LOGGED: '📞 Calls', WHATSAPP_LOGGED: '💬 WhatsApp', EMAIL_LOGGED: '✉ Emails', MEETING: '🤝 Meetings', VIEWING: '🏠 Viewings', CONTACT_ATTEMPT: '↻ No-answer attempts', NOTE: '📝 Notes' };
+const fmtMins = (m) => (m == null ? '—' : m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 6) / 10} h` : `${Math.round(m / 144) / 10} d`);
+const pctOf = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+
+function hbars(rows, { money = false, max } = {}) {
+  const top = max ?? Math.max(1, ...rows.map((r) => r.value));
+  return `<div class="hbars">${rows.map((r) => `<div class="hbar"><span class="l">${esc(r.label)}</span><span class="track"><i style="width:${Math.max(r.value ? 2 : 0, pctOf(r.value, top))}%"></i></span><span class="v">${money ? fmtAED(r.value) : fmtNum(r.value)}${r.extra ? `<span class="small muted"> ${esc(r.extra)}</span>` : ''}</span></div>`).join('')}</div>`;
+}
+
+function dashInsights(d) {
+  const k = d.kpis, f = d.follow_ups, out = [];
+  if (f.overdue) out.push(`<b>${fmtNum(f.overdue)}</b> follow-up${f.overdue > 1 ? 's are' : ' is'} overdue — clear these first.`);
+  if (d.sla.breached) out.push(`<b>${fmtNum(d.sla.breached)}</b> lead${d.sla.breached > 1 ? 's' : ''} missed the first-contact time.`);
+  if (k.open_without_next_step) out.push(`<b>${fmtNum(k.open_without_next_step)}</b> open lead${k.open_without_next_step > 1 ? 's have' : ' has'} no next follow-up scheduled.`);
+  if (k.stale_leads) out.push(`<b>${fmtNum(k.stale_leads)}</b> lead${k.stale_leads > 1 ? 's have' : ' has'} had no contact for 14+ days.`);
+  if (k.unassigned_open) out.push(`<b>${fmtNum(k.unassigned_open)}</b> open lead${k.unassigned_open > 1 ? 's are' : ' is'} not assigned to anyone.`);
+  if (k.total_leads && d.communication.with_preferences < k.total_leads / 2) out.push(`Only ${pctOf(d.communication.with_preferences, k.total_leads)}% of clients have a saved contact preference — record channel, time and tone on each lead.`);
+  return out.length ? `<div class="banner warn dash-insights" style="margin-bottom:16px"><b>Needs attention</b><ul>${out.map((x) => `<li>${x}</li>`).join('')}</ul></div>`
+    : d.kpis.total_leads ? '<div class="banner ok" style="margin-bottom:16px">✓ Nothing overdue. Follow-ups and first contacts are on track.</div>' : '';
+}
+
+// d: dashboard data; opts.base: hash for filters; opts.leadHref(id) or opts.leadAct for owner.
+function dashboardHtml(d, opts = {}) {
+  const k = d.kpis, f = d.follow_ups, s = d.sla, c = d.communication;
+  const leadLink = (id, name) => (opts.ownerOrg ? `<a href="#" data-act="owner-open-lead" data-org="${opts.ownerOrg}" data-id="${id}">${esc(name)}</a>` : `<a href="#/crm/lead/${id}">${esc(name)}</a>`);
+  const stagesShown = d.pipeline.filter((p) => p.count || !['NO_RESPONSE', 'ON_HOLD'].includes(p.stage));
+  const actRows = Object.entries(d.activity.by_type).map(([t, v]) => ({ label: ACT_LABEL[t] || human(t), value: v }));
+  const trendMax = Math.max(1, ...d.activity.trend.map((x) => x.count));
+  const pref = (obj) => Object.entries(obj).filter(([key, v]) => v || key !== 'NOT_SET').map(([key, v]) => ({ label: key === 'NOT_SET' ? 'Not recorded' : human(key), value: v }));
+  const langRows = Object.entries(c.language).map(([key, v]) => ({ label: key === 'NOT_SET' ? 'Not recorded' : key.toUpperCase(), value: v })).sort((a, b) => b.value - a.value);
+  return `${dashInsights(d)}
+  <div class="grid g4">
+    <div class="card"><div class="stat"><span class="l">Open leads</span><span class="v">${fmtNum(k.open_leads)}</span></div><div class="small muted">${fmtNum(k.total_leads)} total · ${fmtNum(k.new_in_period)} new in ${d.period_days} days</div></div>
+    <div class="card"><div class="stat"><span class="l">Pipeline value (open)</span><span class="v" style="font-size:24px">${fmtAED(k.pipeline_value_aed)}</span></div><div class="small muted">Won: ${fmtAED(k.won_value_aed)}</div></div>
+    <div class="card"><div class="stat"><span class="l">Won · win rate</span><span class="v">${fmtNum(k.won)}<span class="small muted" style="font-size:16px"> · ${k.win_rate == null ? '—' : k.win_rate + '%'}</span></span></div><div class="small muted">${fmtNum(k.lost)} lost</div></div>
+    <div class="card"><div class="stat"><span class="l">Follow-ups</span><span class="v" style="${f.overdue ? 'color:var(--bad)' : ''}">${fmtNum(f.overdue)} <span class="small" style="font-size:14px">overdue</span></span></div><div class="small muted">${fmtNum(f.due_today)} today · ${fmtNum(f.next_7_days)} next 7 days · ${fmtNum(f.done_on_time_in_period)}/${fmtNum(f.done_in_period)} done on time</div></div>
+  </div>
+  <div class="grid g4" style="margin-top:16px">
+    <div class="card"><div class="stat"><span class="l">Time to first contact (median)</span><span class="v" style="font-size:24px">${fmtMins(s.median_minutes_to_first_contact)}</span></div><div class="small muted">🔥 Hot: ${fmtMins(s.hot_median_minutes)}</div></div>
+    <div class="card"><div class="stat"><span class="l">First-contact SLA</span><span class="v" style="font-size:24px">${fmtNum(s.met)} met</span></div><div class="small ${s.breached ? '' : 'muted'}" style="${s.breached ? 'color:var(--bad);font-weight:700' : ''}">${fmtNum(s.breached)} missed · ${fmtNum(s.waiting)} waiting</div></div>
+    <div class="card"><div class="stat"><span class="l">No contact for 14+ days</span><span class="v" style="${k.stale_leads ? 'color:var(--bad)' : ''}">${fmtNum(k.stale_leads)}</span></div><div class="small muted">Open leads going cold</div></div>
+    <div class="card"><div class="stat"><span class="l">No next step</span><span class="v">${fmtNum(k.open_without_next_step)}</span></div><div class="small muted">Open leads without a scheduled follow-up${k.unassigned_open != null ? ` · ${fmtNum(k.unassigned_open)} unassigned` : ''}</div></div>
+  </div>
+  <div class="grid g2" style="margin-top:16px;align-items:start">
+    <div class="card"><h3>Pipeline</h3>${hbars(stagesShown.map((p) => ({ label: human(p.stage), value: p.count, extra: p.value_aed ? fmtAED(p.value_aed) : '' })))}
+      <div class="chips" style="margin-top:10px">${d.by_source.map((x) => `<span class="chip">${esc(human(x.source_type))}: ${fmtNum(x.count)}</span>`).join('') || ''}</div></div>
+    <div class="card"><h3>Follow-ups</h3>
+      ${f.upcoming.length ? `<div class="table-wrap"><table><tbody>${f.upcoming.map((x) => `<tr><td>${srcBadge(x.source_type)}</td><td>${leadLink(x.lead_id, x.full_name)}<br><span class="small muted">${esc(x.title)}${x.assignee_name ? ' · ' + esc(x.assignee_name) : ''}</span></td><td class="num" style="${x.overdue ? 'color:var(--bad);font-weight:700' : ''}">${fmtDT(x.due_at)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No open follow-ups</div>'}
+      ${f.stale.length ? `<h3 style="margin-top:14px">Going cold (no contact 14+ days)</h3><div class="table-wrap"><table><tbody>${f.stale.map((x) => `<tr><td>${leadLink(x.lead_id, x.full_name)}</td><td><span class="badge">${esc(human(x.stage))}</span></td><td class="num small muted">${fmtDT(x.last_touch)}</td></tr>`).join('')}</tbody></table></div>` : ''}</div>
+  </div>
+  <div class="grid g2" style="margin-top:16px;align-items:start">
+    <div class="card"><h3>Team communication · last ${d.period_days} days</h3>${hbars(actRows)}
+      <div class="small muted" style="margin:12px 0 6px">Contacts logged per day (last ${d.activity.trend.length} days)</div>
+      <div class="spark" role="img" aria-label="Contacts per day">${d.activity.trend.map((x) => `<span title="${esc(x.day)}: ${x.count}"><i style="height:${Math.max(x.count ? 6 : 2, pctOf(x.count, trendMax))}%"></i></span>`).join('')}</div>
+      ${d.activity.recent.length ? `<h3 style="margin-top:14px">Latest activity</h3><div class="timeline">${d.activity.recent.slice(0, 8).map((a) => `<div class="tl"><div><b>${esc(ACT_LABEL[a.type] || human(a.type))}</b> · ${leadLink(a.lead_id, a.full_name)} <span class="small muted">· ${esc(a.user_name || 'System')} · ${fmtDT(a.created_at)}</span>${a.body ? `<div class="small">${esc(a.body)}</div>` : ''}</div></div>`).join('')}</div>` : ''}</div>
+    <div class="card"><h3>How clients want to be contacted</h3>
+      <p class="small muted" style="margin-top:0">${fmtNum(c.with_preferences)} of ${fmtNum(k.total_leads)} clients have a saved preference. Set it on each lead page.</p>
+      <div class="grid g2" style="gap:14px">
+        <div><div class="small muted" style="font-weight:700;margin-bottom:6px">Channel</div>${hbars(pref(c.preferred_channel))}</div>
+        <div><div class="small muted" style="font-weight:700;margin-bottom:6px">Best time</div>${hbars(pref(c.best_time))}</div>
+        <div><div class="small muted" style="font-weight:700;margin-bottom:6px">Tone</div>${hbars(pref(c.tone))}</div>
+        <div><div class="small muted" style="font-weight:700;margin-bottom:6px">Language</div>${hbars(langRows)}</div>
+      </div>
+      <h3 style="margin-top:14px">Message templates</h3>
+      ${c.templates.length ? `<div class="table-wrap"><table><thead><tr><th>Template</th><th>Channel</th><th>Language</th><th class="num">Used (${d.period_days}d)</th></tr></thead><tbody>${c.templates.map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(human(x.channel))}</td><td>${esc(String(x.language).toUpperCase())}</td><td class="num">${fmtNum(x.uses_in_period)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty small">No templates yet${opts.ownerOrg ? '' : ' — managers can add them under Settings'}.</div>`}</div>
+  </div>
+  ${d.team ? `<div class="card" style="margin-top:16px"><h3>Team · last ${d.period_days} days</h3><div class="table-wrap"><table><thead><tr><th>Member</th><th class="num">Leads</th><th class="num">Open</th><th class="num">Won</th><th class="num">Pipeline</th><th class="num">Overdue</th><th class="num">📞</th><th class="num">💬</th><th class="num">✉</th><th class="num">🤝</th><th class="num">1st contact</th><th>Last activity</th></tr></thead>
+    <tbody>${d.team.map((m) => `<tr class="click" data-href="${opts.base}${opts.base.includes('?') ? '&' : '?'}agent=${m.user_id}&days=${d.period_days}"><td><b>${esc(m.name)}</b><br><span class="small muted">${esc(human(m.role))}</span></td><td class="num">${fmtNum(m.leads)}</td><td class="num">${fmtNum(m.open)}</td><td class="num">${fmtNum(m.won)}</td><td class="num">${fmtAED(m.pipeline_value_aed)}</td><td class="num" style="${m.overdue_follow_ups ? 'color:var(--bad);font-weight:700' : ''}">${fmtNum(m.overdue_follow_ups)}</td><td class="num">${fmtNum(m.calls)}</td><td class="num">${fmtNum(m.whatsapp)}</td><td class="num">${fmtNum(m.emails)}</td><td class="num">${fmtNum(m.meetings)}</td><td class="num">${fmtMins(m.median_minutes_to_first_contact)}</td><td class="small">${m.last_activity_at ? fmtDT(m.last_activity_at) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>
+    <p class="small muted">Click a member to see their dashboard.</p></div>` : ''}`;
+}
+
+function dashControls(d, { base, members }) {
+  const agentSel = members ? `<select data-change="dash-agent" data-base="${esc(base)}" data-days="${d.period_days}" aria-label="Show" style="width:auto"><option value="">Whole ${d.org.kind === 'AGENT' ? 'account' : 'agency'}</option>${members.map((m) => `<option value="${m.user_id}" ${d.agent_id === m.user_id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>` : '';
+  return `${agentSel}<select data-change="dash-days" data-base="${esc(base)}" data-agent="${d.agent_id ?? ''}" aria-label="Period" style="width:auto">${DASH_DAYS.map((n) => `<option value="${n}" ${n === d.period_days ? 'selected' : ''}>Last ${n} days</option>`).join('')}</select>`;
+}
+
+async function viewDashboard(_p, query) {
+  const params = new URLSearchParams();
+  if (query.days) params.set('days', query.days);
+  if (query.agent && can('crm.all')) params.set('agent', query.agent);
+  const d = await GET(`/api/crm/dashboard?${params}`);
+  const members = can('crm.all') ? (await GET('/api/org/members')).members : null;
+  const who = d.scope === 'agent' ? (d.agent_id === state.me.user.id ? 'Your leads' : `Agent: ${members?.find((m) => m.user_id === d.agent_id)?.name || ''}`) : d.org.kind === 'AGENT' ? 'Your account' : 'Whole agency';
+  return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>CRM dashboard</h1><p class="muted" style="margin:4px 0 0">${esc(who)} · last ${d.period_days} days</p></div>
+    <div class="spacer"></div><div class="row">${dashControls(d, { base: '#/dashboard', members })}<a class="btn sm" href="#/crm">Open CRM →</a></div></div>
+  ${dashboardHtml(d, { base: '#/dashboard' })}`;
+}
+
+async function ownerCrm(rest, query) {
+  if (rest[0]) return ownerCrmOrg(rest[0], query);
+  const o = await GET(`/api/owner/crm/overview?days=${encodeURIComponent(query.days || 30)}`);
+  const t0 = o.totals;
+  return `<div class="page-head"><div><div class="kicker">${t('owner_console')}</div><h1>CRM monitor</h1><p class="muted" style="margin:4px 0 0">Every agency and solo agent · last ${o.period_days} days</p></div><div class="spacer"></div>
+    <select data-change="dash-days" data-base="#/owner/crm" data-agent="" aria-label="Period" style="width:auto">${DASH_DAYS.map((n) => `<option value="${n}" ${n === o.period_days ? 'selected' : ''}>Last ${n} days</option>`).join('')}</select></div>
+  <div class="grid g4">
+    <div class="card"><div class="stat"><span class="l">Accounts</span><span class="v">${fmtNum(t0.agencies + t0.solo_agents)}</span></div><div class="small muted">${fmtNum(t0.agencies)} agencies · ${fmtNum(t0.solo_agents)} solo agents</div></div>
+    <div class="card"><div class="stat"><span class="l">Open leads</span><span class="v">${fmtNum(t0.open)}</span></div><div class="small muted">${fmtNum(t0.leads)} total · ${fmtNum(t0.won)} won</div></div>
+    <div class="card"><div class="stat"><span class="l">Open pipeline</span><span class="v" style="font-size:24px">${fmtAED(t0.pipeline_value_aed)}</span></div><div class="small muted">${fmtNum(t0.activities_in_period)} contacts logged</div></div>
+    <div class="card"><div class="stat"><span class="l">Needs attention</span><span class="v" style="${t0.overdue_follow_ups || t0.sla_breached ? 'color:var(--bad)' : ''}">${fmtNum(t0.overdue_follow_ups)}</span></div><div class="small muted">overdue follow-ups · ${fmtNum(t0.sla_breached)} missed first contacts</div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><h3>Accounts</h3><div class="table-wrap"><table><thead><tr><th>Account</th><th class="num">Members</th><th class="num">Leads</th><th class="num">Open</th><th class="num">Won</th><th class="num">Win rate</th><th class="num">Pipeline</th><th class="num">Overdue</th><th class="num">Missed 1st contact</th><th class="num">Contacts (${o.period_days}d)</th><th>Last activity</th></tr></thead>
+    <tbody>${o.organizations.map((x) => `<tr class="click" data-href="#/owner/crm/${x.id}"><td><a href="#/owner/crm/${x.id}"><b>${esc(x.name)}</b></a> <span class="badge ${x.kind === 'AGENT' ? 'gold' : ''}">${x.kind === 'AGENT' ? 'Solo agent' : 'Agency'}</span><br><span class="small muted">${esc(x.owner_email)}</span></td><td class="num">${fmtNum(x.members)}</td><td class="num">${fmtNum(x.leads)}</td><td class="num">${fmtNum(x.open)}</td><td class="num">${fmtNum(x.won)}</td><td class="num">${x.win_rate == null ? '—' : x.win_rate + '%'}</td><td class="num">${fmtAED(x.pipeline_value_aed)}</td><td class="num" style="${x.overdue_follow_ups ? 'color:var(--bad);font-weight:700' : ''}">${fmtNum(x.overdue_follow_ups)}</td><td class="num" style="${x.sla_breached ? 'color:var(--bad);font-weight:700' : ''}">${fmtNum(x.sla_breached)}</td><td class="num">${fmtNum(x.activities_in_period)}</td><td class="small">${x.last_activity_at ? fmtDT(x.last_activity_at) : '<span class="muted">—</span>'}</td></tr>`).join('') || '<tr><td colspan="11" class="empty">No accounts yet</td></tr>'}</tbody></table></div>
+    <p class="small muted">Open an account to see its dashboard, each member's work and its leads. Contact details stay masked until you open a lead; opening and every change you make are recorded in the audit log.</p></div>`;
+}
+
+async function ownerCrmOrg(orgId, query) {
+  const params = new URLSearchParams();
+  if (query.days) params.set('days', query.days);
+  if (query.agent) params.set('agent', query.agent);
+  const leadParams = new URLSearchParams();
+  if (query.agent) leadParams.set('agent', query.agent);
+  if (query.stage) leadParams.set('stage', query.stage);
+  const [d, org, leads] = await Promise.all([GET(`/api/owner/orgs/${orgId}/crm/dashboard?${params}`), GET(`/api/owner/orgs/${orgId}`), GET(`/api/owner/orgs/${orgId}/crm/leads?${leadParams}`)]);
+  const base = `#/owner/crm/${orgId}`;
+  const who = d.scope === 'agent' ? `Member: ${org.members.find((m) => m.user_id === d.agent_id)?.name || ''}` : org.kind === 'AGENT' ? 'Solo agent account' : 'Whole agency';
+  return `<div class="page-head"><div><a href="#/owner/crm" class="small muted">← CRM monitor</a><h1>${esc(org.name)} <span class="badge ${org.kind === 'AGENT' ? 'gold' : ''}" style="vertical-align:middle">${org.kind === 'AGENT' ? 'Solo agent' : 'Agency'}</span></h1><p class="muted" style="margin:4px 0 0">${esc(who)} · last ${d.period_days} days · ${esc(org.owner_email)}</p></div>
+    <div class="spacer"></div><div class="row">${dashControls(d, { base, members: org.members })}<a class="btn sm" href="#/owner/org/${orgId}">Account settings →</a></div></div>
+  <div class="banner cold" style="margin-bottom:16px">👁 You are viewing this account as platform owner. You can move leads between stages and reassign them to members of this account; each change is logged on the lead and in the audit log.</div>
+  ${dashboardHtml(d, { base, ownerOrg: orgId })}
+  <div class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h3 style="margin:0">Leads (${fmtNum(leads.length)})</h3>
+    <select data-change="owner-lead-filter" data-base="${base}" data-agent="${esc(query.agent || '')}" data-days="${d.period_days}" aria-label="Stage" style="width:auto"><option value="">All stages</option>${STAGES.map((s) => `<option value="${s}" ${s === query.stage ? 'selected' : ''}>${esc(human(s))}</option>`).join('')}</select></div>
+    <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Client</th><th>Contact (masked)</th><th>Stage</th><th>Assigned to</th><th class="num">Deal</th><th>Next follow-up</th><th></th></tr></thead>
+    <tbody>${leads.map((l) => `<tr><td>${srcBadge(l.source_type)} <b>${esc(l.full_name)}</b>${l.preferred_channel ? `<br><span class="small muted">Prefers ${esc(human(l.preferred_channel))}</span>` : ''}</td><td class="small mono">${esc(l.phone || '—')}<br>${esc(l.email || '')}</td><td><span class="badge">${esc(human(l.stage))}</span></td><td>${esc(l.assignee_name || '—')}</td><td class="num">${fmtAED(l.deal_value_aed)}</td><td class="small" style="${l.next_task_due && new Date(l.next_task_due) < new Date() ? 'color:var(--bad);font-weight:700' : ''}">${l.next_task_due ? fmtDT(l.next_task_due) : '<span class="muted">none</span>'}</td><td><button class="btn sm" data-act="owner-open-lead" data-org="${orgId}" data-id="${l.id}">Open</button></td></tr>`).join('') || '<tr><td colspan="7" class="empty">No leads</td></tr>'}</tbody></table></div></div>`;
+}
+
+function ownerLeadModal(orgId, l) {
+  return `<div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(l.full_name)}</h2><button class="btn sm ghost" data-act="close-refresh" aria-label="Close">✕</button></div>
+  <div class="row" style="margin:6px 0 12px">${srcBadge(l.source_type)}<span class="badge">${esc(human(l.stage))}</span>${l.suppressed ? '<span class="badge bad">Do not contact</span>' : ''}</div>
+  <div class="kv"><span class="k">${t('phone')}</span><span class="v" dir="ltr">${esc(l.phone || '—')}</span><span class="k">${t('email')}</span><span class="v" style="word-break:break-all">${esc(l.email || '—')}</span>
+    <span class="k">Prefers</span><span class="v">${[l.preferred_channel, l.best_time, l.tone, l.preferred_language && l.preferred_language.toUpperCase()].filter(Boolean).map((x) => esc(human(x))).join(' · ') || '—'}</span>
+    <span class="k">Deal</span><span class="v">${fmtAED(l.deal_value_aed)}</span><span class="k">First contact</span><span class="v">${l.first_contacted_at ? fmtDT(l.first_contacted_at) : 'not yet'}</span></div>
+  <div class="grid g2" style="gap:10px;margin-top:12px">
+    <label class="field">${t('stage')}<select data-change="owner-lead-stage" data-org="${orgId}" data-id="${l.id}">${STAGES.map((s) => `<option value="${s}" ${s === l.stage ? 'selected' : ''}>${esc(human(s))}</option>`).join('')}</select></label>
+    <label class="field">${t('assignee')}<select data-change="owner-lead-assign" data-org="${orgId}" data-id="${l.id}"><option value="" ${l.assigned_user_id ? '' : 'selected'} disabled>— not assigned —</option>${l.members.map((m) => `<option value="${m.user_id}" ${m.user_id === l.assigned_user_id ? 'selected' : ''}>${esc(m.name)} (${esc(human(m.role))})</option>`).join('')}</select></label>
+  </div>
+  <h3>Follow-ups</h3>${l.tasks.map((x) => `<div class="small" style="border-top:1px solid var(--line);padding:4px 0">${x.done_at ? '✓ ' : ''}${esc(x.title)} · ${fmtDT(x.due_at)}${x.assignee_name ? ' · ' + esc(x.assignee_name) : ''}</div>`).join('') || '<span class="muted small">none</span>'}
+  <h3>${t('timeline')}</h3><div class="timeline" style="max-height:260px;overflow:auto">${l.activities.map((a) => `<div class="tl"><div><b>${esc(human(a.type))}</b> <span class="small muted">· ${esc(a.user_name || 'System')} · ${fmtDT(a.created_at)}</span><div class="small">${esc(a.body || '')}</div></div></div>`).join('') || '<span class="muted">—</span>'}</div>
+  <p class="small muted">Opening this lead was recorded in the audit log.</p>`;
 }
 
 async function viewTeam() {
@@ -918,12 +1071,13 @@ async function viewSettings() {
 // ---------------------------------------------------------------------------------
 // Owner console
 // ---------------------------------------------------------------------------------
-async function viewOwner([sub = 'dashboard', ...rest]) {
+async function viewOwner([sub = 'dashboard', ...rest], query = {}) {
   if (sub === 'finance' || sub === 'approvals') return ownerApprovals();
   if (!isOwner() && sub !== 'dashboard') return '<div class="banner bad">Platform owner only.</div>';
   if (sub === 'source') return ownerSource();
   if (sub === 'data') return ownerData();
   if (sub === 'org') return ownerOrg(rest[0]);
+  if (sub === 'crm') return ownerCrm(rest, query);
   if (sub === 'hot') return ownerHot();
   if (sub === 'governance') return ownerGovernance();
   if (sub === 'audit') return ownerAudit();
@@ -1204,6 +1358,8 @@ const actions = {
     box.value = text;
     box.dataset.channel = tpl.channel;
     box.dataset.subject = tpl.name;
+    const f = document.querySelector('[data-form=lead-activity]');
+    if (f) { f.template_id.value = tpl.id; const ty = tpl.channel === 'EMAIL' ? 'EMAIL_LOGGED' : 'WHATSAPP_LOGGED'; if ([...f.type.options].some((o) => o.value === ty)) f.type.value = ty; }
     document.getElementById('tpl-send').textContent = tpl.channel === 'EMAIL' ? 'Open in email' : 'Open in WhatsApp';
   },
   'send-template': (el) => {
@@ -1214,6 +1370,7 @@ const actions = {
       : `https://wa.me/${el.dataset.phone}?text=${encodeURIComponent(box.value)}`;
     window.open(url, '_blank', 'noopener');
   },
+  'owner-open-lead': async (el) => { const l = await GET(`/api/owner/orgs/${el.dataset.org}/crm/leads/${el.dataset.id}`); openModal(ownerLeadModal(el.dataset.org, l)); },
   'remove-member': async (el) => { if (confirm('Remove this member?')) { await api('DELETE', `/api/org/members/${el.dataset.id}`); render(); } },
   'pay-paypal': async (el) => { try { const r = await POST('/api/billing/paypal', { plan: el.dataset.plan }); if (r.approve_url) location.href = r.approve_url; } catch (e) { toast(errMsg(e), true); } },
   'pay-cash': async (el) => {
@@ -1333,7 +1490,8 @@ const forms = {
   'ih-search': async (f) => { state.ih.filter = readFilterForm(f); state.ih.selected.clear(); await runSearch(false); render(); },
   'owner-search': async (f) => { const filter = readFilterForm(f); delete filter.field; state.owner.filter = filter; state.owner.counts = null; render(); },
   'crm-filter': (f) => { const q = new URLSearchParams(Object.fromEntries([...new FormData(f)].filter(([, v]) => v))).toString(); go('#/crm' + (q ? '?' + q : '')); },
-  'lead-activity': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/activities`, { type: f.type.value, body: f.body.value }); toast('✓'); render(); },
+  'lead-activity': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/activities`, { type: f.type.value, body: f.body.value, ...(f.template_id?.value ? { template_id: Number(f.template_id.value) } : {}) }); toast('✓'); render(); },
+  'lead-prefs': async (f) => { await api('PATCH', `/api/crm/leads/${f.dataset.id}`, { preferences: { preferred_channel: f.preferred_channel.value, best_time: f.best_time.value, tone: f.tone.value, preferred_language: f.preferred_language.value } }); toast('Saved ✓'); render(); },
   'lead-task': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/tasks`, { title: f.title.value, due_at: new Date(f.due_at.value).toISOString() }); toast('✓'); render(); },
   invite: async (f) => {
     await POST('/api/org/invitations', { full_name: f.full_name.value, phone: f.phone.value || undefined, email: f.email.value, role: f.role.value, daily_cap: f.daily_cap.value === '' ? null : Number(f.daily_cap.value) });
@@ -1420,6 +1578,20 @@ document.addEventListener('change', async (e) => {
     if (el.dataset.change === 'lead-pick-all') { document.querySelectorAll('.lead-pick').forEach((x) => { x.checked = el.checked; }); }
     if (el.dataset.change === 'lead-pick-all' || el.classList.contains('lead-pick')) { const n = document.getElementById('bulk-count'); if (n) n.textContent = document.querySelectorAll('.lead-pick:checked').length; }
     if (el.dataset.change === 'lead-stage') { await api('PATCH', `/api/crm/leads/${el.dataset.id}`, { stage: el.value }); toast('✓'); render(); }
+    if (el.dataset.change === 'dash-days' || el.dataset.change === 'dash-agent' || el.dataset.change === 'owner-lead-filter') {
+      const q = new URLSearchParams();
+      const days = el.dataset.change === 'dash-days' ? el.value : el.dataset.days;
+      const agent = el.dataset.change === 'dash-agent' ? el.value : el.dataset.agent;
+      if (days) q.set('days', days);
+      if (agent) q.set('agent', agent);
+      if (el.dataset.change === 'owner-lead-filter' && el.value) q.set('stage', el.value);
+      go(`${el.dataset.base}${q.toString() ? '?' + q : ''}`);
+    }
+    if (el.dataset.change === 'owner-lead-stage' || el.dataset.change === 'owner-lead-assign') {
+      const body = el.dataset.change === 'owner-lead-stage' ? { stage: el.value } : { assigned_user_id: Number(el.value) };
+      const l = await api('PATCH', `/api/owner/orgs/${el.dataset.org}/crm/leads/${el.dataset.id}`, body);
+      openModal(ownerLeadModal(el.dataset.org, l)); toast('Saved ✓ — logged on the lead and in the audit log');
+    }
     if (el.dataset.change === 'lead-assign') { await api('PATCH', `/api/crm/leads/${el.dataset.id}`, { assigned_user_id: Number(el.value) }); toast('✓'); render(); }
   } catch (err) { toast(errMsg(err), true); }
 });

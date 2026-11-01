@@ -3,6 +3,7 @@ import { getDb, tx } from './db.js';
 import { HttpError, iso, now, audit, notify, dubaiDay, cleanEmail, cleanName, requireMobile } from './util.js';
 import { activeSubscription } from './entitlements.js';
 import { hasPerm } from './auth.js';
+import { cleanPreferences } from './dashboard.js';
 
 export const STAGES = ['NEW', 'ASSIGNED', 'CONTACT_ATTEMPTED', 'CONTACTED', 'QUALIFIED', 'INTERESTED', 'VIEWING_SCHEDULED', 'VIEWED',
   'NEGOTIATION', 'BOOKING', 'CONTRACT', 'CLOSED_WON', 'CLOSED_LOST', 'NO_RESPONSE', 'ON_HOLD'];
@@ -38,7 +39,7 @@ export function listLeads(req, { source, stage, q, assigned, tag, overdue } = {}
 function loadLead(req, id) {
   const s = scope(req);
   const lead = getDb().prepare(`SELECT l.*, c.full_name, c.email, c.phone, c.nationality, c.preferred_language, c.marketing_permission, c.suppressed,
-      c.investor_id, c.source_type AS contact_source, c.phone_verified_at, u.name AS assignee_name
+      c.investor_id, c.source_type AS contact_source, c.phone_verified_at, c.preferred_channel, c.best_time, c.tone, u.name AS assignee_name
     FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id LEFT JOIN platform_user u ON u.id = l.assigned_user_id
     WHERE l.id = ? AND ${s.sql}`).get(Number(id), ...s.params);
   if (!lead) throw new HttpError(404, 'NOT_FOUND');
@@ -77,10 +78,14 @@ export function parseTags(input) {
   return [...new Set(list)].slice(0, 10);
 }
 
-export function updateLead(req, id, { stage, assigned_user_id, priority, deal_value_aed, expected_close, tags }) {
+export function updateLead(req, id, { stage, assigned_user_id, priority, deal_value_aed, expected_close, tags, preferences }) {
   const lead = loadLead(req, id);
   const db = getDb();
   const ts = iso();
+  if (preferences && typeof preferences === 'object') {
+    const p = cleanPreferences(preferences);
+    for (const [col, val] of Object.entries(p)) db.prepare(`UPDATE crm_contact SET ${col} = ?, updated_at = ? WHERE id = ? AND org_id = ?`).run(val, ts, lead.contact_id, lead.org_id);
+  }
   if (stage) {
     if (!STAGES.includes(stage)) throw new HttpError(400, 'INVALID_STAGE');
     db.prepare('UPDATE crm_lead SET stage = ?, updated_at = ? WHERE id = ?').run(stage, ts, lead.id);
@@ -116,13 +121,19 @@ export function updateLead(req, id, { stage, assigned_user_id, priority, deal_va
   return leadDetail(req, lead.id);
 }
 
-export function addActivity(req, id, { type, body }) {
+export function addActivity(req, id, { type, body, template_id }) {
   const lead = loadLead(req, id);
   if (!ACTIVITY_TYPES.includes(type)) throw new HttpError(400, 'INVALID_ACTIVITY_TYPE');
   const outreach = ['CALL_LOGGED', 'WHATSAPP_LOGGED', 'EMAIL_LOGGED'].includes(type);
   if (outreach && lead.suppressed) throw new HttpError(403, 'CONTACT_SUPPRESSED');
-  getDb().prepare('INSERT INTO lead_activity (org_id, lead_id, user_id, type, body, created_at) VALUES (?,?,?,?,?,?)')
-    .run(lead.org_id, lead.id, req.user.id, type, String(body || '').slice(0, 4000), iso());
+  let templateId = null;
+  if (template_id != null && template_id !== '') {
+    const tpl = getDb().prepare('SELECT id FROM message_template WHERE id = ? AND org_id = ?').get(Number(template_id), lead.org_id);
+    if (!tpl) throw new HttpError(400, 'UNKNOWN_TEMPLATE');
+    templateId = tpl.id;
+  }
+  getDb().prepare('INSERT INTO lead_activity (org_id, lead_id, user_id, type, body, created_at, template_id) VALUES (?,?,?,?,?,?,?)')
+    .run(lead.org_id, lead.id, req.user.id, type, String(body || '').slice(0, 4000), iso(), templateId);
   return leadDetail(req, lead.id);
 }
 
