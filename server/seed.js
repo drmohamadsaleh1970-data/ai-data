@@ -14,6 +14,7 @@ export function seedBase() {
   plan.run('AGENT_MONTHLY', 'Agent', 9900, 99, 'UNLIMITED', 0, 1);
   // Person-level subscriber transfer stays OFF until legal approval is recorded.
   db.prepare("INSERT INTO feature_flag (key, enabled, note, updated_at) VALUES ('COLD_SUBSCRIBER_TRANSFER', 0, 'Enable only after documented legal/rights approval', ?) ON CONFLICT DO NOTHING").run(iso());
+  db.prepare("INSERT INTO feature_flag (key, enabled, note, updated_at) VALUES ('HOT_AUTO_DISTRIBUTE', 0, 'New Hot pool leads go automatically, in turn, to customers who still have Hot credits', ?) ON CONFLICT DO NOTHING").run(iso());
   const src = db.prepare(`INSERT INTO hot_lead_source (code, name, category, status, allows_resale, isolation_required, requirements) VALUES (?,?,?,?,?,?,?)
     ON CONFLICT(code) DO UPDATE SET name = excluded.name, requirements = excluded.requirements`);
   [

@@ -544,7 +544,8 @@ const ADDED_COLUMNS = [
   ['crm_contact', 'preferred_channel', 'TEXT'],      // WHATSAPP | CALL | EMAIL | SMS (how the client likes to be reached)
   ['crm_contact', 'best_time', 'TEXT'],              // MORNING | AFTERNOON | EVENING | ANY
   ['crm_contact', 'tone', 'TEXT'],                   // FORMAL | FRIENDLY
-  ['lead_activity', 'template_id', 'INTEGER'],       // message template used for this contact, if any
+  ['lead_activity', 'template_id', 'INTEGER'],
+  ['hot_lead_pool', 'allocation_method', 'TEXT'],     // MANUAL (owner chose) | AUTO (shared in turn)       // message template used for this contact, if any
 ];
 
 function addColumns(conn, pg) {

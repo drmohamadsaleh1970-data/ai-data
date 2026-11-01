@@ -127,7 +127,7 @@ export function suppressInvestor({ actor, investorId, reason }) {
 }
 
 export function setFlag({ actor, key, enabled }) {
-  const allowed = ['COLD_SUBSCRIBER_TRANSFER'];
+  const allowed = ['COLD_SUBSCRIBER_TRANSFER', 'HOT_AUTO_DISTRIBUTE'];
   if (!allowed.includes(key)) throw new HttpError(400, 'UNKNOWN_FLAG');
   getDb().prepare('INSERT INTO feature_flag (key, enabled, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET enabled = excluded.enabled, updated_by = excluded.updated_by, updated_at = excluded.updated_at')
     .run(key, enabled ? 1 : 0, actor.id, iso());
