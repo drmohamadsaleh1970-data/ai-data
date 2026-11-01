@@ -85,7 +85,12 @@ curl -X POST https://ai-data-phi.vercel.app/api/public/inquiry \
 ## 5. Selling pool leads to agencies
 1. **Owner console → Hot pricing & pool → Pricing:** choose the model and price, then click **Save & approve pricing** (MFA required). Until then, checkout and allocation stay disabled.
 2. After an agency pays for Hot Leads, use **Grant Hot credits** to give it credits.
-3. In **AI-DATA Hot pool**, pick the agency next to a lead and click **Allocate**. The lead moves into that agency's CRM and one credit is billed on the separate Hot ledger. Cold quota is never touched.
+3. Send leads to customers, automatically or by hand:
+   - **Automatic distribution** (same page): click **Turn on** (MFA required). Every new pool lead then goes straight to the next customer in the **queue**: the agencies and solo agents that still have Hot credits, the one served longest ago first. Leads are shared in turn; each lead goes to one customer and uses one credit. The visitor's form answer never names the customer.
+   - **Distribute waiting leads now** shares the leads already waiting in the pool the same way, oldest first, until credits run out.
+   - **By hand:** in **AI-DATA Hot pool**, pick a customer next to a lead and click **Allocate**.
+
+   Either way the lead moves into that customer's CRM, assigned to one of its agents with a response-time alert, and one credit is billed on the separate Hot ledger (marked *Auto* or *Manual* in the pool list). Cold quota is never touched. With no pricing approved, or no customer with credits, leads simply wait in the pool.
 
 ## Property portals (Property Finder, Bayut, Dubizzle)
 Portal leads belong to the agency whose listing produced them. They must stay in that agency's CRM: never pooled, resold or merged. Connect them only through the portal's approved API for that agency. No portal connector is built yet; each needs the agency's own portal agreement and credentials.

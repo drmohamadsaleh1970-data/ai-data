@@ -1,5 +1,5 @@
 import { getDb, tx } from './db.js';
-import { HttpError, iso, now, audit, randomToken } from './util.js';
+import { HttpError, iso, now, audit, randomToken, flag } from './util.js';
 import { normalizePhone } from './crm.js';
 
 // Hot Leads: a separate commercial product with its own ledger. Nothing here reads or
@@ -74,7 +74,15 @@ const yes = (v) => v === true || ['true', 'yes', '1', 'on'].includes(String(v ??
 
 // Public first-party inquiry intake, routed by the site key (see siteKeys above).
 const rate = new Map();
-export function intakeInquiry({ siteKey, body, ip, origin }) {
+export function intakeInquiry(args) {
+  const result = intakeInquiryTx(args);
+  // A new pool lead goes straight to the next customer with Hot credits when the owner
+  // has turned automatic distribution on. The visitor's answer never names that customer.
+  if (result.destination === 'AIHOME_HOT_POOL' && flag(AUTO_FLAG)) autoAllocate(result.pool_id);
+  return result;
+}
+
+function intakeInquiryTx({ siteKey, body, ip, origin }) {
   const db = getDb();
   const site = db.prepare('SELECT * FROM site_key WHERE key = ?').get(String(siteKey || ''));
   if (!site) throw new HttpError(401, 'INVALID_SITE_KEY');
@@ -129,7 +137,7 @@ function createHotLead(conn, { orgId, fullName, email, phone, language, interest
 }
 
 export function pool() {
-  return getDb().prepare('SELECT id, source_code, full_name, interest_json, consent_json, received_at, allocated_org_id, allocated_at FROM hot_lead_pool ORDER BY id DESC LIMIT 200').all();
+  return getDb().prepare('SELECT p.id, p.source_code, p.full_name, p.interest_json, p.consent_json, p.received_at, p.allocated_org_id, p.allocated_at, p.allocation_method, o.name AS allocated_org_name FROM hot_lead_pool p LEFT JOIN organization o ON o.id = p.allocated_org_id ORDER BY p.id DESC LIMIT 200').all();
 }
 
 // Exclusive allocation of an AI-DATA pool lead to one paying agency, billed against its
@@ -137,23 +145,73 @@ export function pool() {
 export function allocate({ actor, poolId, orgId }) {
   const p = pricing();
   if (!p.configured) throw new HttpError(409, 'OWNER_CONFIGURATION_REQUIRED');
-  return tx((conn) => {
-    const lead = conn.prepare('SELECT * FROM hot_lead_pool WHERE id = ?').get(Number(poolId));
-    if (!lead) throw new HttpError(404, 'NOT_FOUND');
-    if (lead.allocated_org_id) throw new HttpError(409, 'ALREADY_ALLOCATED');
-    const src = conn.prepare('SELECT * FROM hot_lead_source WHERE code = ?').get(lead.source_code);
-    if (src?.isolation_required) throw new HttpError(403, 'SOURCE_POLICY_FORBIDS_REALLOCATION');
-    const ent = conn.prepare("SELECT * FROM hot_lead_entitlement WHERE org_id = ? AND status='ACTIVE' AND credits_used < credits_total ORDER BY id LIMIT 1").get(Number(orgId));
-    if (!ent) throw new HttpError(402, 'NO_HOT_CREDITS');
-    const consent = JSON.parse(lead.consent_json);
-    const leadId = createHotLead(conn, { orgId: Number(orgId), fullName: lead.full_name, email: lead.email, phone: lead.phone, language: lead.preferred_language, interest: JSON.parse(lead.interest_json), consent, detail: 'AIHOME_HOT_ALLOCATION' });
-    conn.prepare('UPDATE hot_lead_pool SET allocated_org_id = ?, allocated_at = ? WHERE id = ?').run(Number(orgId), iso(), lead.id);
-    conn.prepare('UPDATE hot_lead_entitlement SET credits_used = credits_used + 1 WHERE id = ?').run(ent.id);
-    conn.prepare('INSERT INTO hot_lead_billing_ledger (org_id, pool_id, crm_lead_id, entitlement_id, amount_cents, currency, created_at) VALUES (?,?,?,?,?,?,?)')
-      .run(Number(orgId), lead.id, leadId, ent.id, p.rule.price_cents, p.rule.currency, iso());
-    conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target) VALUES (?,?,?,?,?)').run(iso(), actor.id, Number(orgId), 'HOT_LEAD_ALLOCATED', `pool:${lead.id}`);
-    return { crm_lead_id: leadId };
-  });
+  return tx((conn) => allocateIn(conn, { actorId: actor.id, poolId, orgId, rule: p.rule, method: 'MANUAL' }));
+}
+
+function allocateIn(conn, { actorId, poolId, orgId, rule, method }) {
+  const lead = conn.prepare('SELECT * FROM hot_lead_pool WHERE id = ?').get(Number(poolId));
+  if (!lead) throw new HttpError(404, 'NOT_FOUND');
+  if (lead.allocated_org_id) throw new HttpError(409, 'ALREADY_ALLOCATED');
+  const src = conn.prepare('SELECT * FROM hot_lead_source WHERE code = ?').get(lead.source_code);
+  if (src?.isolation_required) throw new HttpError(403, 'SOURCE_POLICY_FORBIDS_REALLOCATION');
+  const ent = conn.prepare("SELECT * FROM hot_lead_entitlement WHERE org_id = ? AND status='ACTIVE' AND credits_used < credits_total ORDER BY id LIMIT 1").get(Number(orgId));
+  if (!ent) throw new HttpError(402, 'NO_HOT_CREDITS');
+  const consent = JSON.parse(lead.consent_json);
+  const leadId = createHotLead(conn, { orgId: Number(orgId), fullName: lead.full_name, email: lead.email, phone: lead.phone, language: lead.preferred_language, interest: JSON.parse(lead.interest_json), consent, detail: 'AIHOME_HOT_ALLOCATION' });
+  conn.prepare('UPDATE hot_lead_pool SET allocated_org_id = ?, allocated_at = ?, allocation_method = ? WHERE id = ?').run(Number(orgId), iso(), method, lead.id);
+  conn.prepare('UPDATE hot_lead_entitlement SET credits_used = credits_used + 1 WHERE id = ?').run(ent.id);
+  conn.prepare('INSERT INTO hot_lead_billing_ledger (org_id, pool_id, crm_lead_id, entitlement_id, amount_cents, currency, created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(Number(orgId), lead.id, leadId, ent.id, rule.price_cents, rule.currency, iso());
+  conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target) VALUES (?,?,?,?,?)')
+    .run(iso(), actorId ?? null, Number(orgId), method === 'AUTO' ? 'HOT_LEAD_AUTO_ALLOCATED' : 'HOT_LEAD_ALLOCATED', `pool:${lead.id}`);
+  return { crm_lead_id: leadId, org_id: Number(orgId) };
+}
+
+// --- Automatic distribution -------------------------------------------------------
+// Customers "in the queue" are organizations with an active Hot entitlement that still
+// has credits. Each lead goes to the one served least recently (never served first),
+// so leads are shared in turn. Exclusive: one lead, one customer, one credit.
+export const AUTO_FLAG = 'HOT_AUTO_DISTRIBUTE';
+
+export function distributionQueue(conn = getDb()) {
+  const rows = conn.prepare(`SELECT e.org_id, o.name, o.kind, SUM(e.credits_total - e.credits_used) AS credits_left
+    FROM hot_lead_entitlement e JOIN organization o ON o.id = e.org_id
+    WHERE e.status = 'ACTIVE' AND e.credits_used < e.credits_total GROUP BY e.org_id, o.name, o.kind`).all();
+  const last = new Map(conn.prepare('SELECT org_id, MAX(created_at) AS at FROM hot_lead_billing_ledger GROUP BY org_id').all().map((r) => [Number(r.org_id), r.at]));
+  return rows.map((r) => ({ org_id: Number(r.org_id), name: r.name, kind: r.kind, credits_left: Number(r.credits_left), last_lead_at: last.get(Number(r.org_id)) || null }))
+    .sort((a, b) => ((a.last_lead_at || '') < (b.last_lead_at || '') ? -1 : (a.last_lead_at || '') > (b.last_lead_at || '') ? 1 : a.org_id - b.org_id));
+}
+
+// Gives one waiting pool lead to the next customer in the queue. Returns the result, or
+// null when it stays in the pool (no pricing, no customer with credits, or source policy).
+export function autoAllocate(poolId, actorId = null) {
+  const p = pricing();
+  if (!p.configured) return null;
+  try {
+    return tx((conn) => {
+      const next = distributionQueue(conn)[0];
+      if (!next) return null;
+      return allocateIn(conn, { actorId, poolId, orgId: next.org_id, rule: p.rule, method: 'AUTO' });
+    });
+  } catch (e) {
+    if (e instanceof HttpError) return null; // stays in the pool for the owner
+    throw e;
+  }
+}
+
+// Owner button: share every waiting pool lead (oldest first) until credits run out.
+export function distributeWaiting({ actor }) {
+  const p = pricing();
+  if (!p.configured) throw new HttpError(409, 'OWNER_CONFIGURATION_REQUIRED');
+  const waiting = getDb().prepare('SELECT id FROM hot_lead_pool WHERE allocated_org_id IS NULL ORDER BY received_at, id').all();
+  const given = [];
+  for (const w of waiting) {
+    const r = autoAllocate(w.id, actor.id);
+    if (r) given.push(r);
+    else if (!distributionQueue().length) break;
+  }
+  audit({ actor: actor.id, action: 'HOT_POOL_DISTRIBUTED', meta: { allocated: given.length, waiting: waiting.length } });
+  return { allocated: given.length, still_waiting: waiting.length - given.length, by_org: given.reduce((m, g) => ((m[g.org_id] = (m[g.org_id] || 0) + 1), m), {}) };
 }
 
 export function orgHotView(orgId) {

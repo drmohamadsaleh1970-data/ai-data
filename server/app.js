@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDb } from './db.js';
 import { config, paypalConfigured } from './config.js';
-import { HttpError, iso, audit, randomToken, sha256, newTotpSecret, totp, dubaiDay } from './util.js';
+import { HttpError, iso, audit, randomToken, sha256, newTotpSecret, totp, dubaiDay, flag } from './util.js';
 import {
   loadSession, csrfGuard, requireUser, requireOrgPermission, requirePlatformRole, requireRecentMfa, verifyMfa,
   createSession, destroySession, verifyGoogleCredential, upsertGoogleUser, ROLE_PERMISSIONS, ORG_ROLES, readCookie, saveProfile, checkProfile, hasPerm,
@@ -319,7 +319,8 @@ export function createApp(options = {}) {
     return { ...out, emailed: mail.sent > 0, email_configured: emailConfigured() };
   }));
   r.post('/owner/subscriptions/:id/terminate', FINANCE, requireRecentMfa, ok((req) => { billing.terminateSubscription({ subscriptionId: req.params.id, actor: req.user, reason: req.body.reason }); return { ok: true }; }));
-  r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources(), site_keys: hot.siteKeys() })));
+  r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources(), site_keys: hot.siteKeys(), auto_distribute: flag(hot.AUTO_FLAG), queue: hot.distributionQueue() })));
+  r.post('/owner/hot/distribute', OWNER, ok((req) => hot.distributeWaiting({ actor: req.user })));
   r.post('/owner/hot/site-keys', OWNER, ok((req) => hot.createSiteKey({ actor: req.user, orgId: req.body.org_id || null, label: req.body.label, allowedOrigin: req.body.allowed_origin })));
   r.post('/owner/hot/site-keys/:key/revoke', OWNER, ok((req) => hot.revokeSiteKey({ actor: req.user, key: req.params.key })));
   r.post('/owner/hot/pricing', OWNER, requireRecentMfa, ok((req) => hot.configurePricing({ actor: req.user, model: req.body.model, priceCents: Math.round(Number(req.body.price_aed ?? req.body.price_usd) * 100), exclusive: req.body.exclusive !== false })));
