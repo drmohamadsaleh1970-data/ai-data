@@ -2,13 +2,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Each test file gets its own fresh SQLite file with reference data and, unless turned
+// A fresh, empty database for one test file: a new SQLite file, or - when DATABASE_URL
+// is set (npm run test:pg) - a new private schema in that Postgres database.
+export function freshTestDb(prefix = 'aihome-test-') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  process.env.DB_FILE = path.join(dir, 'test.db');
+  process.env.EXPORT_DIR = path.join(dir, 'exports');
+  if (process.env.DATABASE_URL || process.env.POSTGRES_URL) process.env.DATABASE_SCHEMA = `test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return dir;
+}
+
+// Each test file gets its own fresh database with reference data and, unless turned
 // off, FICTIONAL fixtures (test/fixtures.js). By default the app is built with the
 // test-only sign-in (createApp({ testLogin: true })), which production never enables.
 export async function startTestServer({ fixtures = true, testLogin = true } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aihome-test-'));
-  process.env.DB_FILE = path.join(dir, 'test.db');
-  process.env.EXPORT_DIR = path.join(dir, 'exports');
+  freshTestDb();
   const { getDb } = await import('../server/db.js');
   const { seedBase, ensureOwner } = await import('../server/seed.js');
   const { seedFixtures } = await import('./fixtures.js');

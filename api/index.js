@@ -1,14 +1,15 @@
 // Vercel serverless entry. Static files in public/ are served by Vercel's CDN; every
 // /api/* request is rewritten here (see vercel.json) and handled by the Express app.
 //
-// Storage: without a persistent database the SQLite file lives in /tmp, which is
-// per-instance and wiped on cold starts. Reference data and the owner (from settings)
-// are recreated on every start; everything else is lost until permanent storage is
-// added — see README "Deploying to Vercel".
+// Storage: set DATABASE_URL (Supabase / any PostgreSQL) so sessions, CRM records and
+// payments are shared by every instance and survive restarts. Without it the app falls
+// back to a SQLite file in /tmp, which is per-instance and wiped on cold starts - users
+// get signed out at random and data disappears. See README "Deploying to Vercel".
 let ready;
 let lastSweep = 0;
 
 async function init() {
+  if (!process.env.DATABASE_URL && !process.env.POSTGRES_URL) console.warn('[db] DATABASE_URL is not set: using temporary /tmp storage that is lost on every cold start');
   process.env.DB_FILE ||= '/tmp/aihome.db';
   process.env.EXPORT_DIR ||= '/tmp/exports';
   const { getDb } = await import('../server/db.js');

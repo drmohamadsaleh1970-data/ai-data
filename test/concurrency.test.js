@@ -4,13 +4,13 @@ import { Worker } from 'node:worker_threads';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { freshTestDb } from './helpers.js';
 
 // Acceptance test 4: two agents of the same AGENT_MONTHLY account (99/day) each submit
 // 70 distinct new records at the same moment from separate threads with separate DB
 // connections. Committed transfers must never exceed 99.
 test('concurrent transfers never exceed the shared daily allowance', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aihome-conc-'));
-  process.env.DB_FILE = path.join(dir, 'c.db');
+  freshTestDb('aihome-conc-');
   const { getDb } = await import('../server/db.js');
   const { seedBase } = await import('../server/seed.js');
   const { seedFixtures } = await import('./fixtures.js');

@@ -98,7 +98,7 @@ export function seedDemo({ investors = 600 } = {}) {
   activeSub(agency, 'AGENCY_MONTHLY', 99900);
   db.prepare("INSERT INTO site_key (key, org_id, label) VALUES ('marinacrest-demo-site', ?, 'marinacrest.example')").run(agency);
   // Demo-only platform key (Hot pool). Real keys are created by the owner under Hot Leads.
-  db.prepare("INSERT OR IGNORE INTO site_key (key, org_id, label) VALUES ('aihome-public', NULL, 'ai-home.world (DEMO)')").run();
+  db.prepare("INSERT INTO site_key (key, org_id, label) VALUES ('aihome-public', NULL, 'ai-home.world (DEMO)') ON CONFLICT DO NOTHING").run();
   const soloOrg = org('Sam Solo Properties (DEMO)', 'AGENT', solo);
   activeSub(soloOrg, 'AGENT_MONTHLY', 9900);
   const pendingOrg = org('Palm Gate Homes (DEMO)', 'AGENCY', pending);

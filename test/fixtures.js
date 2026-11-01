@@ -95,7 +95,7 @@ export function seedFixtures({ investors = 600 } = {}) {
   member(agency, agent2, 'AGENT');
   activeSub(agency, 'AGENCY_MONTHLY', 99900);
   db.prepare("INSERT INTO site_key (key, org_id, label) VALUES ('marinacrest-test-site', ?, 'marinacrest.example')").run(agency);
-  db.prepare("INSERT OR IGNORE INTO site_key (key, org_id, label) VALUES ('pool-test-site', NULL, 'ai-home.world (TEST)')").run();
+  db.prepare("INSERT INTO site_key (key, org_id, label) VALUES ('pool-test-site', NULL, 'ai-home.world (TEST)') ON CONFLICT DO NOTHING").run();
   const soloOrg = org('Sam Solo Properties (TEST)', 'AGENT', solo);
   activeSub(soloOrg, 'AGENT_MONTHLY', 9900);
   const pendingOrg = org('Palm Gate Homes (TEST)', 'AGENCY', pending);

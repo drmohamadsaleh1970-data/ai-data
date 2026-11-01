@@ -23,7 +23,7 @@ export function listLeads(req, { source, stage, q, assigned } = {}) {
   if (source) { where.push('l.source_type = ?'); params.push(source); }
   if (stage) { where.push('l.stage = ?'); params.push(stage); }
   if (assigned) { where.push('l.assigned_user_id = ?'); params.push(Number(assigned)); }
-  if (q) { where.push('(c.full_name LIKE ? OR c.email LIKE ? OR c.phone LIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  if (q) { where.push('(lower(c.full_name) LIKE ? OR lower(c.email) LIKE ? OR lower(c.phone) LIKE ?)'); const like = `%${String(q).toLowerCase()}%`; params.push(like, like, like); }
   return getDb().prepare(`SELECT l.id, l.source_type, l.source_detail, l.stage, l.priority, l.first_contact_due, l.first_contacted_at, l.created_at, l.campaign_tag,
       c.full_name, c.email, c.phone, c.marketing_permission, c.suppressed, u.name AS assignee_name, l.assigned_user_id
     FROM crm_lead l JOIN crm_contact c ON c.id = l.contact_id LEFT JOIN platform_user u ON u.id = l.assigned_user_id
@@ -141,7 +141,7 @@ export function reports(req) {
       (SELECT COUNT(*) FROM follow_up_task t WHERE t.assignee_id = u.id AND t.org_id = m.org_id AND t.due_at < ? AND t.done_at IS NOT NULL AND t.done_at <= t.due_at) AS tasks_on_time,
       (SELECT COUNT(DISTINCT a.lead_id) FROM lead_activity a WHERE a.user_id = u.id AND a.org_id = m.org_id AND a.type IN ('NOTE','CALL_LOGGED','WHATSAPP_LOGGED','EMAIL_LOGGED','MEETING','VIEWING','CONTACT_ATTEMPT')) AS leads_with_notes
     FROM membership m JOIN platform_user u ON u.id = m.user_id LEFT JOIN crm_lead l ON l.assigned_user_id = u.id AND l.org_id = m.org_id
-    WHERE m.org_id = ? AND m.status = 'ACTIVE' GROUP BY u.id ORDER BY leads DESC`).all(iso(), iso(), iso(), orgId);
+    WHERE m.org_id = ? AND m.status = 'ACTIVE' GROUP BY u.id, u.name, m.role, m.org_id ORDER BY leads DESC`).all(iso(), iso(), iso(), orgId);
   const w = DEFAULT_SCORE_WEIGHTS;
   const ratio = (a, b) => (b ? a / b : null);
   const scored = agents.map((a) => {

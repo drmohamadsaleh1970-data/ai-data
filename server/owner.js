@@ -85,7 +85,7 @@ export function dashboard() {
     pending_cash: db.prepare("SELECT c.*, o.name AS org_name, u.email AS requested_by_email FROM cash_payment_request c JOIN organization o ON o.id = c.org_id JOIN platform_user u ON u.id = c.requested_by WHERE c.status = 'PENDING_PAYMENT' ORDER BY c.id").all(),
     awaiting_activation: db.prepare("SELECT s.id, s.plan_code, s.created_at, o.name AS org_name FROM subscription s JOIN organization o ON o.id = s.org_id WHERE s.status = 'AWAITING_ACTIVATION'").all(),
     cold_usage_today: db.prepare('SELECT o.name, q.local_day, q.plan_limit, q.committed_used FROM daily_quota_account q JOIN organization o ON o.id = q.org_id ORDER BY q.local_day DESC, q.committed_used DESC LIMIT 30').all(),
-    data: db.prepare("SELECT COUNT(*) AS investors, SUM(rights_status='APPROVED') AS approved, SUM(rights_status='RESTRICTED_PENDING_REVIEW') AS pending, SUM(suppressed) AS suppressed, (SELECT COUNT(*) FROM investor_transaction) AS transactions FROM investor_contact").get(),
+    data: db.prepare("SELECT COUNT(*) AS investors, SUM(CASE WHEN rights_status='APPROVED' THEN 1 ELSE 0 END) AS approved, SUM(CASE WHEN rights_status='RESTRICTED_PENDING_REVIEW' THEN 1 ELSE 0 END) AS pending, SUM(suppressed) AS suppressed, (SELECT COUNT(*) FROM investor_transaction) AS transactions FROM investor_contact").get(),
     exports: db.prepare('SELECT e.id, e.row_count, e.status, e.created_at, u.email FROM owner_export_job e JOIN platform_user u ON u.id = e.user_id ORDER BY e.id DESC LIMIT 20').all(),
   };
 }
