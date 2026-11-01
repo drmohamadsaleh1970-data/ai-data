@@ -9,10 +9,15 @@ import { signIn, passMfa, coldUsedToday } from './helpers.js';
 
 const shots = 'test-results/journey';
 
+// Each journey walks through a dozen screens with three people.
+test.setTimeout(180_000);
+
 function watch(page, label) {
   const problems = [];
   page.on('pageerror', (e) => problems.push(`${label} page error: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error' && !/favicon|gsi\/client|accounts\.google/.test(m.text())) problems.push(`${label} console: ${m.text()}`); });
+  // 4xx answers are part of the journey (a wrong mobile number is refused, the owner is
+  // asked for MFA); server errors and script errors are not.
+  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|favicon|gsi\/client|accounts\.google/.test(m.text())) problems.push(`${label} console: ${m.text()}`); });
   page.on('response', (r) => { if (r.url().includes('/api/') && r.status() >= 500) problems.push(`${label} ${r.status()} ${r.url()}`); });
   return problems;
 }
