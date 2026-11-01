@@ -83,6 +83,8 @@ async function ownerConfirms(owner, ref, customerEmail) {
 
 async function customerActivates(page, code, limit) {
   await page.goto('/#/overview');
+  await page.reload(); // the customer comes back later: a fresh page load
+
   await page.getByRole('link', { name: /Payment confirmed/ }).click();
   await expect(page.getByLabel('Activation code')).toHaveValue(code);
   await page.getByRole('button', { name: 'Activate now' }).click();
