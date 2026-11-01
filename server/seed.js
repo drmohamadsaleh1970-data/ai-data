@@ -30,12 +30,16 @@ export function seedBase() {
   ].forEach((s) => src.run(...s));
 }
 
-// The platform owner comes from settings (OWNER_EMAIL, OWNER_TOTP_SECRET). Runs on every
-// start: creates the owner row if missing (linked to Google on first sign-in, see
-// upsertGoogleUser) and keeps its role and MFA secret in line with the settings.
+// The platform owners come from settings (OWNER_EMAIL, comma separated; the first is the
+// main owner; OWNER_TOTP_SECRET). Runs on every start: creates each owner row if missing
+// (linked to Google on first sign-in, see upsertGoogleUser) and keeps role and MFA secret
+// in line with the settings. Returns the main owner's id.
 export function ensureOwner() {
-  const email = config.ownerEmail;
-  if (!email) return null;
+  const ids = config.ownerEmails.map(ensureOneOwner);
+  return ids[0] ?? null;
+}
+
+function ensureOneOwner(email) {
   const db = getDb();
   const secret = config.ownerTotpSecret || null;
   const row = db.prepare('SELECT id FROM platform_user WHERE lower(email) = ? ORDER BY id LIMIT 1').get(email);

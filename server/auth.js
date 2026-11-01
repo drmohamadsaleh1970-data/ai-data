@@ -142,9 +142,9 @@ export function upsertGoogleUser({ sub, email, name }) {
     db.prepare('UPDATE platform_user SET email = ?, name = CASE WHEN profile_completed_at IS NULL THEN ? ELSE name END WHERE id = ?').run(email, name, existing.id);
     return existing.id;
   }
-  const ownerEmail = config.ownerEmail;
-  const pending = ownerEmail && String(email).toLowerCase() === ownerEmail
-    ? db.prepare('SELECT * FROM platform_user WHERE google_sub = ?').get(PENDING_OWNER_SUB + ownerEmail)
+  const lower = String(email).toLowerCase();
+  const pending = config.ownerEmails.includes(lower)
+    ? db.prepare('SELECT * FROM platform_user WHERE google_sub = ?').get(PENDING_OWNER_SUB + lower)
     : null;
   if (pending) {
     db.prepare('UPDATE platform_user SET google_sub = ?, email = ?, name = ? WHERE id = ?').run(sub, email, name, pending.id);

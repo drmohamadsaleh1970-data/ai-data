@@ -138,7 +138,7 @@ The repository is ready to import into Vercel: `vercel.json` plus `api/index.js`
 |---|---|
 | `DATABASE_URL` | Permanent storage (required for real use). A PostgreSQL connection string; for Supabase use the **Transaction pooler** string (port 6543) from Connect → Direct. The Supabase integration for Vercel sets `POSTGRES_URL` instead, which is used when `DATABASE_URL` is absent |
 | `GOOGLE_CLIENT_ID` | Signing in (nobody can sign in without it) |
-| `OWNER_EMAIL`, `OWNER_TOTP_SECRET` | The platform owner account and its MFA |
+| `OWNER_EMAIL`, `OWNER_TOTP_SECRET` | The platform owner account(s) and their MFA. Several owners: comma-separated Google emails, main owner first |
 | `BASE_URL` (optional) | Address used in activation links; defaults to the address the request came in on |
 | PayPal variables (optional) | PayPal checkout; cash/bank payments work without them |
 
