@@ -60,13 +60,19 @@ export function createApp(options = {}) {
   })));
   r.get('/auth/config', (req, res) => {
     const nonce = randomToken(16);
-    res.cookie('aih_nonce', nonce, { httpOnly: true, sameSite: 'lax', secure: config.secureCookies, maxAge: 10 * 60_000, path: '/' });
+    // Keep the last few nonces: every tab (or reload) asks for one, and the Google button
+    // in an older tab must still work. Each nonce is used at most once (see /auth/google).
+    const recent = String(readCookie(req, 'aih_nonce') || '').split('.').filter((n) => /^[\w-]{10,64}$/.test(n)).slice(-4);
+    res.cookie('aih_nonce', [...recent, nonce].join('.'), { httpOnly: true, sameSite: 'lax', secure: config.secureCookies, maxAge: 10 * 60_000, path: '/' });
     res.json({ google_client_id: config.googleClientId || null, nonce, demo_mode: config.demoMode, paypal_connected: paypalConfigured() });
   });
   r.post('/auth/google', ok(async (req, res) => {
     // Validate the typed details first, so a bad phone number never creates an account.
     const profile = req.body.profile ? checkProfile(req.body.profile) : null;
-    const ident = await verifyGoogleCredential(String(req.body.credential || ''), readCookie(req, 'aih_nonce'));
+    const nonces = String(readCookie(req, 'aih_nonce') || '').split('.').filter(Boolean);
+    const ident = await verifyGoogleCredential(String(req.body.credential || ''), nonces);
+    // Spend the nonce that was used so the same Google token cannot be replayed.
+    res.cookie('aih_nonce', nonces.filter((n) => n !== ident.nonce).join('.'), { httpOnly: true, sameSite: 'lax', secure: config.secureCookies, maxAge: 10 * 60_000, path: '/' });
     if (profile && profile.email !== String(ident.email).toLowerCase()) {
       throw new HttpError(400, 'EMAIL_MISMATCH', `You entered ${profile.email}, but signed in with Google as ${ident.email}. Use the Google account for the email you entered, or correct the email.`);
     }
@@ -294,6 +300,8 @@ export function createApp(options = {}) {
   r.post('/owner/hot/pool/:id/allocate', OWNER, ok((req) => hot.allocate({ actor: req.user, poolId: req.params.id, orgId: req.body.org_id })));
   // ai-home.world investor-data source (import only; this portal is standalone).
   r.get('/owner/source', OWNER, ok(() => source.sourceStatus()));
+  r.delete('/owner/source/jobs/:id', OWNER, ok((req) => owner.deleteImportJob({ actor: req.user, id: req.params.id })));
+  r.post('/owner/source/jobs/clear', OWNER, ok((req) => owner.clearImportHistory({ actor: req.user, confirm: req.body?.confirm })));
   r.post('/owner/source/preview', OWNER, ok(async (req) => {
     const { parsed, ...summary } = source.preview(await source.parseFile(req.body.file_base64, req.body.file_name));
     return { ...summary, sample: parsed.filter((p) => !p.errors.length).slice(0, 5).map((p) => p.record) };

@@ -151,3 +151,28 @@ test('API sync pulls all pages with the bearer token; NOT_CONNECTED when unset',
   assert.ok(status.jobs.length >= 4);
   delete process.env.AIHOME_SOURCE_URL;
 });
+
+test('owner deletes one import from the history or clears it; investor records stay', async () => {
+  const o = client(srv.base);
+  await o.login('owner');
+  const before = (await o.get('/api/owner/source')).data;
+  assert.ok(before.jobs.length >= 2, 'earlier tests left imports in the history');
+  const investors = db.prepare('SELECT COUNT(*) AS n FROM investor_contact').get().n;
+
+  const one = before.jobs[0];
+  assert.equal((await o.del(`/api/owner/source/jobs/${one.id}`)).status, 200);
+  const after = (await o.get('/api/owner/source')).data;
+  assert.equal(after.jobs.length, before.jobs.length - 1);
+  assert.ok(!after.jobs.some((j) => j.id === one.id));
+  assert.equal((await o.del(`/api/owner/source/jobs/${one.id}`)).status, 404);
+
+  assert.equal((await o.post('/api/owner/source/jobs/clear', { confirm: 'yes' })).data.error, 'CONFIRMATION_REQUIRED');
+  const cleared = await o.post('/api/owner/source/jobs/clear', { confirm: 'clear import history' });
+  assert.equal(cleared.status, 200);
+  assert.equal((await o.get('/api/owner/source')).data.jobs.length, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM investor_contact').get().n, investors, 'records untouched');
+
+  const d = client(srv.base);
+  await d.login('director');
+  assert.equal((await d.post('/api/owner/source/jobs/clear', { confirm: 'CLEAR IMPORT HISTORY' })).status, 403);
+});

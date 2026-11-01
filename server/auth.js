@@ -116,7 +116,9 @@ export function verifyMfa(req, code) {
 
 // --- Google Identity Services (OIDC ID token) ----------------------------------------
 let jwks;
-export async function verifyGoogleCredential(credential, expectedNonce) {
+// expectedNonces: the nonces this browser was given recently (one per page load).
+export async function verifyGoogleCredential(credential, expectedNonces) {
+  const allowed = Array.isArray(expectedNonces) ? expectedNonces : expectedNonces ? [expectedNonces] : [];
   if (!config.googleClientId) throw new HttpError(503, 'GOOGLE_NOT_CONFIGURED', 'Set GOOGLE_CLIENT_ID to enable Google sign-in.');
   jwks ??= createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
   const { payload } = await jwtVerify(credential, jwks, {
@@ -124,8 +126,10 @@ export async function verifyGoogleCredential(credential, expectedNonce) {
     audience: config.googleClientId,
   });
   if (!payload.email_verified) throw new HttpError(401, 'GOOGLE_EMAIL_NOT_VERIFIED');
-  if (!expectedNonce || payload.nonce !== expectedNonce) throw new HttpError(401, 'GOOGLE_NONCE_MISMATCH');
-  return { sub: payload.sub, email: payload.email, name: payload.name || payload.email };
+  if (!payload.nonce || !allowed.includes(payload.nonce)) {
+    throw new HttpError(401, 'GOOGLE_NONCE_MISMATCH', 'The sign-in window expired. Reload the page and click Continue with Google again.');
+  }
+  return { sub: payload.sub, email: payload.email, name: payload.name || payload.email, nonce: payload.nonce };
 }
 
 // Placeholder Google subject of the owner row created from settings before first sign-in.
