@@ -18,6 +18,8 @@ import * as dashboard from './dashboard.js';
 import * as campaigns from './campaigns.js';
 import * as live from './live.js';
 import * as meta from './meta.js';
+import * as alerts from './alerts.js';
+import * as googleAds from './google-ads.js';
 import * as source from './source-aihome.js';
 import { deliverQueued, emailConfigured } from './mail.js';
 
@@ -139,6 +141,7 @@ export function createApp(options = {}) {
   });
   r.get('/webhooks/meta', (req, res, next) => { try { res.type('text/plain').send(meta.verifySubscription(req.query)); } catch (e) { next(e); } });
   r.post('/webhooks/meta', ok((req) => meta.handleWebhook({ headers: req.headers, rawBody: req.rawBody, body: req.body })));
+  r.post('/webhooks/google-ads', ok((req) => googleAds.handleLead(req.body || {})));
   r.post('/webhooks/paypal', ok((req) => billing.handlePaypalWebhook(req.headers, req.body)));
 
   // --- Me / organizations ---------------------------------------------------------------
@@ -270,6 +273,12 @@ export function createApp(options = {}) {
   r.get('/reports', requireOrgPermission('reports.view'), ok((req) => crm.reports(req)));
   r.get('/hot', requireOrgPermission('hot.view'), ok((req) => hot.orgHotView(orgId(req))));
   r.get('/hot/live', requireOrgPermission('hot.view'), ok((req) => live.liveForMember(req)));
+  r.get('/alerts', requireOrgPermission('hot.view'), ok((req) => alerts.listAlerts(req.user, orgId(req))));
+  r.post('/alerts', requireOrgPermission('hot.view'), ok((req) => alerts.createAlert({ user: req.user, orgId: orgId(req), body: req.body || {} })));
+  r.delete('/alerts/:id', requireOrgPermission('hot.view'), ok((req) => alerts.deleteAlert({ user: req.user, id: req.params.id })));
+  r.get('/google-ads', requireOrgPermission('integrations.manage'), ok((req) => googleAds.listHooks({ orgId: orgId(req) })));
+  r.post('/google-ads', requireOrgPermission('integrations.manage'), ok((req) => googleAds.createHook({ actor: req.user, orgId: orgId(req), label: req.body?.label, campaign_id: req.body?.campaign_id })));
+  r.delete('/google-ads/:id', requireOrgPermission('integrations.manage'), ok((req) => googleAds.deleteHook({ actor: req.user, id: req.params.id, orgId: orgId(req) })));
   r.get('/campaigns', requireOrgPermission('hot.view'), ok((req) => campaigns.listCampaigns({ orgId: orgId(req) })));
   r.post('/campaigns', requireOrgPermission('integrations.manage'), ok((req) => campaigns.createCampaign({ actor: req.user, orgId: orgId(req), body: req.body || {} })));
   r.patch('/campaigns/:id', requireOrgPermission('integrations.manage'), ok((req) => campaigns.updateCampaign({ actor: req.user, id: req.params.id, orgId: orgId(req), body: req.body || {} })));
@@ -338,7 +347,13 @@ export function createApp(options = {}) {
   }));
   r.post('/owner/subscriptions/:id/terminate', FINANCE, requireRecentMfa, ok((req) => { billing.terminateSubscription({ subscriptionId: req.params.id, actor: req.user, reason: req.body.reason }); return { ok: true }; }));
   r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources(), site_keys: hot.siteKeys(), auto_distribute: flag(hot.AUTO_FLAG), queue: hot.distributionQueue() })));
-  r.get('/owner/hot/live', OWNER, ok(() => live.liveForOwner()));
+  r.get('/owner/hot/live', OWNER, ok((req) => live.liveForOwner(req.user)));
+  r.get('/owner/alerts', OWNER, ok((req) => alerts.listAlerts(req.user, null)));
+  r.post('/owner/alerts', OWNER, ok((req) => alerts.createAlert({ user: req.user, orgId: null, body: req.body || {}, owner: true })));
+  r.delete('/owner/alerts/:id', OWNER, ok((req) => alerts.deleteAlert({ user: req.user, id: req.params.id })));
+  r.get('/owner/google-ads', OWNER, ok(() => googleAds.listHooks({ all: true })));
+  r.post('/owner/google-ads', OWNER, ok((req) => googleAds.createHook({ actor: req.user, orgId: req.body?.org_id ? Number(req.body.org_id) : null, label: req.body?.label, campaign_id: req.body?.campaign_id })));
+  r.delete('/owner/google-ads/:id', OWNER, ok((req) => googleAds.deleteHook({ actor: req.user, id: req.params.id, owner: true })));
   r.get('/owner/campaigns', OWNER, ok(() => ({ ...campaigns.listCampaigns({}), channels: campaigns.CHANNELS })));
   r.post('/owner/campaigns', OWNER, ok((req) => campaigns.createCampaign({ actor: req.user, orgId: req.body?.org_id ? Number(req.body.org_id) : null, body: req.body || {} })));
   r.patch('/owner/campaigns/:id', OWNER, ok((req) => campaigns.updateCampaign({ actor: req.user, id: req.params.id, owner: true, body: req.body || {} })));

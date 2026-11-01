@@ -1045,10 +1045,11 @@ const campaignUrl = (slug, src) => `${location.origin}/c/${encodeURIComponent(sl
 async function viewLeadgen() {
   const owner = isOwner();
   const manage = owner || can('integrations.manage');
-  const [data, orgs, metaInfo] = await Promise.all([
+  const [data, orgs, metaInfo, google] = await Promise.all([
     GET(owner ? '/api/owner/campaigns' : '/api/campaigns'),
     owner ? GET('/api/owner/dashboard').then((d) => d.organizations) : null,
     owner ? GET('/api/owner/meta') : null,
+    manage ? GET(owner ? '/api/owner/google-ads' : '/api/google-ads') : { hooks: [], webhook_path: '' },
   ]);
   const t0 = data.totals;
   const list = data.campaigns;
@@ -1085,6 +1086,24 @@ async function viewLeadgen() {
       <div class="small muted" style="margin-top:6px">Last lead: ${c.last_lead_at ? fmtDT(c.last_lead_at) : 'none yet'}</div>
     </div>`;
   };
+  const googleCard = !manage ? '' : `<div class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h3 style="margin:0">Google Ads lead forms</h3>${statusBadge(google.hooks.length ? 'CONNECTED' : 'NOT_CONNECTED')}</div>
+    <p class="small muted">Leads from Google Search, YouTube and Demand Gen lead forms arrive here within seconds. In Google Ads → your lead form → <b>Lead delivery → Webhook</b>, paste the URL and the key of a connection below, then press <b>Send test data</b>.</p>
+    <div class="code">${esc(location.origin + google.webhook_path)}</div>
+    ${google.hooks.length ? `<div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Connection</th><th>Key</th>${owner ? '<th>Leads go to</th>' : ''}<th>Campaign</th><th>Last lead</th><th></th></tr></thead><tbody>${google.hooks.map((h) => `<tr><td><b>${esc(h.label)}</b></td><td><button class="btn sm" data-act="copy-text" data-text="${esc(h.hook_key)}">Copy key</button></td>${owner ? `<td>${h.org_id ? esc(h.org_name) : 'AI-DATA Hot pool'}</td>` : ''}<td>${esc(h.campaign_name || '—')}</td><td class="small">${h.last_lead_at ? fmtDT(h.last_lead_at) : '—'}</td><td><button class="btn sm ghost" data-act="gads-remove" data-id="${h.id}">Remove</button></td></tr>`).join('')}</tbody></table></div>` : ''}
+    <form class="grid" data-form="gads-create" style="gap:8px;margin-top:12px"><div class="grid ${owner ? 'g3' : 'g2'}" style="gap:8px"><label class="field">Connection name<input type="text" name="label" required maxlength="120" placeholder="e.g. Google – Marina studios"></label>
+      ${owner ? `<label class="field">Leads go to<select name="org_id"><option value="">AI-DATA Hot pool</option>${orgs.map((o) => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select></label>` : ''}
+      <label class="field">Campaign (optional)<select name="campaign_id"><option value="">—</option>${list.map((c) => `<option value="${c.id}">${esc(c.name)}${owner ? ` (${c.org_id ? esc(c.org_name) : 'Hot pool'})` : ''}</option>`).join('')}</select></label></div>
+      <button class="btn" style="justify-self:start">Create Google Ads connection</button></form></div>`;
+  const captureCard = !manage || !list.length ? '' : (() => {
+    const pick = list.find((c) => String(c.id) === String(state.lgCapture)) || list.find((c) => c.status === 'ACTIVE') || list[0];
+    const full = list.find((c) => c.id === pick.id);
+    const snippet = `<script src="${location.origin}/search-capture.js" defer\n  data-site-key="${full.site_key || 'KEY'}" data-campaign="${full.slug}"\n  data-lang="${full.language}"${full.privacy_url ? ` data-privacy-url="${full.privacy_url}"` : ''}></script>\n<script>\n  window.aidataSearch = window.aidataSearch || function () { (aidataSearch.q = aidataSearch.q || []).push(arguments); };\n  // After each search on your site:\n  aidataSearch({ area: 'Dubai Marina', property_type: 'Apartment', bedrooms: 0, budget_max_aed: 1000000, purpose: 'buy' },\n               { analytics: true /* only if the visitor accepted analytics cookies */ });\n</script>`;
+    return `<div class="card" style="margin-top:16px"><h3 style="margin-top:0">Search capture for your website</h3>
+      <p class="small muted">Put this on the search pages of ai-home.world (or any property site). When someone searches, e.g. a studio in Dubai Marina up to AED 1M, a small box offers <b>“Get matching homes on WhatsApp”</b>. If they fill it in, they reach Live leads within seconds as a 🔥 Hot lead with their exact search. With analytics consent, every search also appears anonymously under <i>Searching now</i>.</p>
+      <label class="field">Campaign for these leads<select data-change="lg-capture">${list.map((c) => `<option value="${c.id}" ${c.id === pick.id ? 'selected' : ''}>${esc(c.name)}${c.status === 'ACTIVE' ? '' : ' (paused)'}</option>`).join('')}</select></label>
+      <div class="code" style="white-space:pre-wrap;margin-top:8px">${esc(snippet)}</div>
+      <button class="btn sm" style="margin-top:8px" data-act="copy-text" data-text="${esc(snippet)}">Copy code</button></div>`;
+  })();
   const metaCard = !owner ? '' : `<div class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h3 style="margin:0">Meta Lead Ads (Facebook / Instagram)</h3>${statusBadge(metaInfo.configured && metaInfo.pages.length ? 'CONNECTED' : 'NOT_CONNECTED')}</div>
     ${metaInfo.configured ? `<p class="small muted">In your Meta app → Webhooks → Page, subscribe to <b>leadgen</b> with this callback address and your verify token:</p><div class="code">${esc(location.origin + metaInfo.webhook_path)}</div>`
       : `<div class="banner warn" style="margin-top:10px">Not set up on the server yet. Add <b>META_APP_SECRET</b> and <b>META_VERIFY_TOKEN</b> in Vercel → Settings → Environment Variables, redeploy, then connect your Pages here. Until then, use Zapier/Make (see Hot pricing & pool).</div>`}
@@ -1120,7 +1139,7 @@ async function viewLeadgen() {
         <li>Print the <b>QR code</b> on flyers, boards or show stands.</li><li>Every enquiry arrives as a 🔥 Hot lead with the person's consent, visible on <a href="#/live">Live leads</a>.</li>
         <li>Enter the ad spend to see the cost per lead and per deal won.</li></ol></div></div>
   </div>
-  ${metaCard}`;
+  ${captureCard}${googleCard}${metaCard}`;
 }
 
 // --- Live leads board ------------------------------------------------------------
@@ -1163,7 +1182,7 @@ function liveBody(d) {
   </div>
   <div class="card" style="margin-top:16px"><h3 style="margin-top:0">${owner ? 'Hot leads in every account' : d.scope === 'mine' ? 'Your Hot leads' : 'Hot leads'} · last 48 hours and anyone still waiting</h3>
     <div class="live-list">${leads.map((l) => `<div class="live-row ${fresh.has(`l${l.id}`) ? 'live-new' : ''} ${!l.first_contacted_at && l.first_contact_due && l.first_contact_due < d.server_time ? 'live-late' : ''}">
-      <div class="live-main"><b>${owner ? esc(l.full_name) : `<a href="#/crm/lead/${l.id}">${esc(l.full_name)}</a>`}</b>${fresh.has(`l${l.id}`) ? ' <span class="badge hot">NEW</span>' : ''}
+      <div class="live-main"><b>${owner ? esc(l.full_name) : `<a href="#/crm/lead/${l.id}">${esc(l.full_name)}</a>`}</b>${fresh.has(`l${l.id}`) ? ' <span class="badge hot">NEW</span>' : ''}${l.matches?.length ? ` <span class="badge gold" title="Matches your alert">⭐ ${esc(l.matches.join(', '))}</span>` : ''}
         <div class="small muted">${[l.area, l.campaign ? `📣 ${l.campaign}` : null, l.source].filter(Boolean).map(esc).join(' · ')}</div></div>
       ${owner ? `<div class="small">${esc(l.org_name || '')}</div>` : ''}
       <div class="small">${l.assignee_name ? `👤 ${esc(l.assignee_name)}` : '<span class="muted">unassigned</span>'}</div>
@@ -1172,17 +1191,28 @@ function liveBody(d) {
       ${owner ? `<a class="btn sm" href="#/owner/crm/${l.org_id}">Open</a>` : `<a class="btn sm ${l.first_contacted_at ? '' : 'primary'}" href="#/crm/lead/${l.id}">${l.first_contacted_at ? 'Open' : 'Contact now'}</a>`}
     </div>`).join('') || '<div class="empty">No Hot leads yet. New enquiries appear here within seconds.</div>'}</div></div>
   ${owner ? `<div class="card" style="margin-top:16px"><h3 style="margin-top:0">AI-DATA Hot pool</h3><div class="live-list">${d.pool.map((p) => `<div class="live-row ${fresh.has(`p${p.id}`) ? 'live-new' : ''}">
-      <div class="live-main"><b>${esc(p.full_name)}</b>${fresh.has(`p${p.id}`) ? ' <span class="badge hot">NEW</span>' : ''}<div class="small muted">${[p.area, p.campaign ? `📣 ${p.campaign}` : null, p.source].filter(Boolean).map(esc).join(' · ')}</div></div>
+      <div class="live-main"><b>${esc(p.full_name)}</b>${fresh.has(`p${p.id}`) ? ' <span class="badge hot">NEW</span>' : ''}${p.matches?.length ? ` <span class="badge gold" title="Matches your alert">⭐ ${esc(p.matches.join(', '))}</span>` : ''}<div class="small muted">${[p.area, p.campaign ? `📣 ${p.campaign}` : null, p.source].filter(Boolean).map(esc).join(' · ')}</div></div>
       <div class="small muted">${ago(p.received_at)}</div>
       <div>${p.allocated_org_name ? `<span class="badge ok">${esc(p.allocated_org_name)}</span> <span class="badge ${p.allocation_method === 'AUTO' ? 'gold' : ''}">${p.allocation_method === 'AUTO' ? 'Auto' : 'Manual'}</span>` : '<span class="badge warn">⏳ waiting</span>'}</div>
-      ${p.allocated_org_name ? '' : '<a class="btn sm" href="#/owner/hot">Allocate</a>'}</div>`).join('') || '<div class="empty">Pool is empty.</div>'}</div></div>` : ''}`;
+      ${p.allocated_org_name ? '' : '<a class="btn sm" href="#/owner/hot">Allocate</a>'}</div>`).join('') || '<div class="empty">Pool is empty.</div>'}</div></div>` : ''}
+  ${owner ? searchesCard(d, fresh, ago) : ''}`;
+}
+
+const searchWhat = (x) => [x.bedrooms === 0 ? 'Studio' : x.bedrooms ? `${x.bedrooms}BR` : null, x.property_type, x.area, x.budget_max_aed ? `up to ${fmtAED(x.budget_max_aed)}` : null, x.purpose].filter(Boolean).map(esc).join(' · ') || 'Any';
+function searchesCard(d, fresh, ago) {
+  return `<div class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h3 style="margin:0">🔎 Searching now on ai-home.world</h3><span class="badge">${fmtNum(d.stats.searches_last_hour)} in the last hour · anonymous</span></div>
+    <p class="small muted">What visitors are searching right now. No names or numbers: a search becomes a lead only when the visitor asks for matches with the search capture on your site (Lead generation → Search capture).</p>
+    ${d.top_searches.length ? `<div class="chips" style="margin-bottom:10px">${d.top_searches.map((t0) => `<span class="chip">${searchWhat(t0)} · ${fmtNum(t0.searches)}×</span>`).join('')}</div>` : ''}
+    <div class="live-list">${d.searches.slice(0, 20).map((x) => `<div class="live-row ${fresh.has(`s${x.id}`) ? 'live-new' : ''}"><div class="live-main">${searchWhat(x)}${x.matches?.length ? ` <span class="badge gold">⭐ ${esc(x.matches.join(', '))}</span>` : ''}<div class="small muted">${esc(x.site)}</div></div><div class="small muted">${ago(x.created_at)}</div></div>`).join('') || '<div class="empty small">No searches in the last hour.</div>'}</div></div>`;
 }
 async function pollLive(first = false) {
   const d = await GET(isOwner() ? '/api/owner/hot/live' : '/api/hot/live');
-  const ids = new Set([...d.leads.map((l) => `l${l.id}`), ...(d.pool || []).map((p) => `p${p.id}`)]);
-  const fresh = first ? new Set() : new Set([...ids].filter((x) => !state.live.seen.has(x)));
-  for (const x of fresh) state.live.fresh.add(x);
+  const ids = new Set([...d.leads.map((l) => `l${l.id}`), ...(d.pool || []).map((p) => `p${p.id}`), ...(d.searches || []).map((x) => `s${x.id}`)]);
+  const freshAll = first ? new Set() : new Set([...ids].filter((x) => !state.live.seen.has(x)));
+  for (const x of freshAll) state.live.fresh.add(x);
   state.live.seen = ids;
+  const fresh = new Set([...freshAll].filter((x) => !x.startsWith('s')));
+  if ([...freshAll].some((x) => x.startsWith('s') && d.searches.find((y) => `s${y.id}` === x)?.matches?.length) && liveSoundOn() && !fresh.size) liveBeep();
   if (fresh.size) {
     state.live.unseen += fresh.size;
     if (document.hidden || !document.hasFocus()) document.title = `(${state.live.unseen}) ${document.title.replace(/^\(\d+\) /, '')}`;
@@ -1193,7 +1223,7 @@ async function pollLive(first = false) {
 }
 async function viewLive() {
   state.live = { seen: new Set(), fresh: new Set(), unseen: 0 };
-  const d = await pollLive(true);
+  const [d, myAlerts] = await Promise.all([pollLive(true), GET(isOwner() ? '/api/owner/alerts' : '/api/alerts')]);
   setTimeout(() => {
     tickLiveClocks();
     liveTimers.push(setInterval(tickLiveClocks, 1000));
@@ -1204,7 +1234,24 @@ async function viewLive() {
   }, 0);
   return `<div class="page-head"><div><div class="kicker">${isOwner() ? t('owner_console') : esc(state.me.active_org.name)}</div><h1>📡 Live leads</h1><p class="muted" style="margin:4px 0 0">New Hot leads appear here by themselves, with the countdown to first contact. <span class="live-dot"></span> Live</p></div>
     <div class="spacer"></div><button class="btn sm" data-act="live-sound">${liveSoundOn() ? '🔔 Sound on' : '🔕 Sound off'}</button>${isOwner() || can('integrations.manage') ? '<a class="btn sm" href="#/leadgen">📣 Lead generation</a>' : ''}</div>
-  <div id="live-body">${liveBody(d)}</div>`;
+  <div id="live-body">${liveBody(d)}</div>
+  ${alertsCard(myAlerts)}`;
+}
+
+function alertsCard(list) {
+  const owner = isOwner();
+  return `<div class="card" style="margin-top:16px"><h3 style="margin-top:0">⭐ My lead alerts</h3>
+    <p class="small muted" style="margin-top:0">Get a notification the moment a Hot lead like this arrives${owner ? ' — in any account or in your Hot pool. Optionally also when someone (anonymous) is searching it on ai-home.world' : ' in your leads'}. Matching leads are starred on this board.</p>
+    ${list.length ? `<div class="table-wrap"><table><tbody>${list.map((a) => `<tr><td><b>${esc(a.name)}</b><br><span class="small muted">${esc(a.summary)}${a.include_searches ? ' · also searches' : ''}</span></td><td style="text-align:end"><button class="btn sm ghost" data-act="alert-delete" data-id="${a.id}" aria-label="Delete alert ${esc(a.name)}">Delete</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty small">No alerts yet.</div>'}
+    <form class="grid" data-form="alert-create" style="gap:8px;margin-top:12px">
+      <div class="grid g3" style="gap:8px"><label class="field">Alert name<input type="text" name="name" maxlength="80" placeholder="e.g. Marina studios ≤ 1M"></label>
+        <label class="field">Area<input type="text" name="area" maxlength="80" placeholder="Dubai Marina"></label>
+        <label class="field">Property type<select name="property_type"><option value="">Any</option>${['Apartment', 'Villa', 'Townhouse', 'Penthouse', 'Plot', 'Office'].map((x) => `<option>${x}</option>`).join('')}</select></label></div>
+      <div class="grid g3" style="gap:8px"><label class="field">Bedrooms<select name="bedrooms"><option value="">Any</option><option value="0">Studio</option>${[1, 2, 3, 4, 5].map((n) => `<option value="${n}">${n}</option>`).join('')}</select></label>
+        <label class="field">Budget from (AED)<input type="number" name="budget_min_aed" min="0" step="50000" placeholder="e.g. 800000"></label>
+        <label class="field">Budget up to (AED)<input type="number" name="budget_max_aed" min="0" step="50000" placeholder="e.g. 1200000"></label></div>
+      ${owner ? '<label class="check"><input type="checkbox" name="include_searches"> Also alert me when someone is searching this on ai-home.world (anonymous, at most every 10 minutes)</label>' : ''}
+      <button class="btn primary" style="justify-self:start">Create alert</button></form></div>`;
 }
 
 async function viewTeam() {
@@ -1631,6 +1678,8 @@ const actions = {
   'lg-toggle': async (el) => { await api('PATCH', `${isOwner() ? '/api/owner' : '/api'}/campaigns/${el.dataset.id}`, { status: el.dataset.status }); toast(el.dataset.status === 'ACTIVE' ? 'Campaign live ✓' : 'Campaign paused'); render(); },
   'meta-remove': async (el) => { if (!confirm('Disconnect this Page? New Facebook/Instagram leads from it will stop arriving.')) return; await withMfa(() => api('DELETE', `/api/owner/meta/pages/${el.dataset.id}`)); toast('Page disconnected'); render(); },
   'live-sound': () => { const on = !liveSoundOn(); try { localStorage.setItem('aih_live_sound', on ? '1' : '0'); } catch { /* not kept */ } if (on) liveBeep(); render(); },
+  'alert-delete': async (el) => { await api('DELETE', `${isOwner() ? '/api/owner' : '/api'}/alerts/${el.dataset.id}`); toast('Alert deleted'); render(); },
+  'gads-remove': async (el) => { if (!confirm('Remove this Google Ads connection? Google leads sent to its key will be refused.')) return; await api('DELETE', `${isOwner() ? '/api/owner' : '/api'}/google-ads/${el.dataset.id}`); toast('Connection removed'); render(); },
   'owner-open-lead': async (el) => { const l = await GET(`/api/owner/orgs/${el.dataset.org}/crm/leads/${el.dataset.id}`); openModal(ownerLeadModal(el.dataset.org, l)); },
   'remove-member': async (el) => { if (confirm('Remove this member?')) { await api('DELETE', `/api/org/members/${el.dataset.id}`); render(); } },
   'pay-paypal': async (el) => { try { const r = await POST('/api/billing/paypal', { plan: el.dataset.plan }); if (r.approve_url) location.href = r.approve_url; } catch (e) { toast(errMsg(e), true); } },
@@ -1752,6 +1801,18 @@ const forms = {
   'owner-search': async (f) => { const filter = readFilterForm(f); delete filter.field; state.owner.filter = filter; state.owner.counts = null; render(); },
   'crm-filter': (f) => { const q = new URLSearchParams(Object.fromEntries([...new FormData(f)].filter(([, v]) => v))).toString(); go('#/crm' + (q ? '?' + q : '')); },
   'lead-activity': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/activities`, { type: f.type.value, body: f.body.value, ...(f.template_id?.value ? { template_id: Number(f.template_id.value) } : {}) }); toast('✓'); render(); },
+  'alert-create': async (f) => {
+    const body = { name: f.name.value, area: f.area.value, property_type: f.property_type.value, bedrooms: f.bedrooms.value, budget_min_aed: f.budget_min_aed.value, budget_max_aed: f.budget_max_aed.value };
+    if (f.include_searches) body.include_searches = f.include_searches.checked;
+    await POST(isOwner() ? '/api/owner/alerts' : '/api/alerts', body);
+    toast('Alert created ✓'); render();
+  },
+  'gads-create': async (f) => {
+    const body = { label: f.label.value, campaign_id: f.campaign_id.value ? Number(f.campaign_id.value) : null };
+    if (f.org_id) body.org_id = f.org_id.value ? Number(f.org_id.value) : null;
+    await POST(isOwner() ? '/api/owner/google-ads' : '/api/google-ads', body);
+    toast('Google Ads connection created ✓ — copy its key into Google Ads'); render();
+  },
   'lg-create': async (f) => {
     const body = { name: f.name.value, channel: f.channel.value, headline: f.headline.value, description: f.description.value, area: f.area.value, property_type: f.property_type.value, language: f.language.value, privacy_url: f.privacy_url.value, spend_aed: f.spend_aed.value };
     if (f.org_id) body.org_id = f.org_id.value ? Number(f.org_id.value) : null;
@@ -1860,6 +1921,7 @@ document.addEventListener('change', async (e) => {
       if (el.dataset.change === 'owner-lead-filter' && el.value) q.set('stage', el.value);
       go(`${el.dataset.base}${q.toString() ? '?' + q : ''}`);
     }
+    if (el.dataset.change === 'lg-capture') { state.lgCapture = el.value; render(); }
     if (el.dataset.change === 'owner-lead-stage' || el.dataset.change === 'owner-lead-assign') {
       const body = el.dataset.change === 'owner-lead-stage' ? { stage: el.value } : { assigned_user_id: Number(el.value) };
       const l = await api('PATCH', `/api/owner/orgs/${el.dataset.org}/crm/leads/${el.dataset.id}`, body);
