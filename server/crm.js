@@ -400,3 +400,81 @@ export async function importLeadsXlsx(req, { base64, commit, rightsConfirmed }) 
   audit({ actor: req.user.id, org: orgId, action: 'CRM_IMPORT', meta: { created, rows: rows.length } });
   return { ...preview, created };
 }
+
+// --- Agents joining an agency -----------------------------------------------------------
+// An agent who signs in "under an agency" asks to join it; the agency approves (choosing
+// role and daily limit) or declines. Invitations by email still join directly.
+const MANAGER_ROLES = ['ORG_OWNER', 'AGENCY_DIRECTOR', 'ORG_ADMIN'];
+
+// Agencies a person can ask to join. Names only; customer accounts of the platform owners
+// (their own follow-up CRM) are not listed.
+export function searchAgencies(q) {
+  const term = String(q || '').trim().toLowerCase();
+  if (term.length < 2) return [];
+  return getDb().prepare(`SELECT o.id, o.name FROM organization o JOIN platform_user u ON u.id = o.owner_user_id
+    WHERE o.kind = 'AGENCY' AND u.platform_role IS NULL AND lower(o.name) LIKE ? ORDER BY o.name LIMIT 8`).all(`%${term}%`);
+}
+
+export function agencyById(id) {
+  const org = getDb().prepare(`SELECT o.id, o.name FROM organization o JOIN platform_user u ON u.id = o.owner_user_id
+    WHERE o.id = ? AND o.kind = 'AGENCY' AND u.platform_role IS NULL`).get(Number(id));
+  if (!org) throw new HttpError(400, 'AGENCY_NOT_FOUND', 'Choose your agency from the list.');
+  return org;
+}
+
+export function requestToJoin(user, orgId) {
+  const db = getDb();
+  const org = agencyById(orgId);
+  if (db.prepare("SELECT 1 FROM membership WHERE org_id = ? AND user_id = ? AND status = 'ACTIVE'").get(org.id, user.id)) return { status: 'MEMBER', org };
+  const open = db.prepare("SELECT id FROM join_request WHERE org_id = ? AND user_id = ? AND status = 'PENDING'").get(org.id, user.id);
+  if (open) return { status: 'PENDING', org, id: open.id };
+  const id = Number(db.prepare("INSERT INTO join_request (org_id, user_id, status, created_at) VALUES (?,?,'PENDING',?)").run(org.id, user.id, iso()).lastInsertRowid);
+  const managers = db.prepare(`SELECT user_id FROM membership WHERE org_id = ? AND status = 'ACTIVE' AND role IN (${MANAGER_ROLES.map(() => '?').join(',')})`).all(org.id, ...MANAGER_ROLES);
+  for (const m of managers) notify(m.user_id, org.id, 'JOIN_REQUEST', `${user.name} (${user.email}) asks to join ${org.name} as an agent. Approve on the Team page.`, '#/team');
+  audit({ actor: user.id, org: org.id, action: 'JOIN_REQUESTED', target: `join:${id}` });
+  return { status: 'PENDING', org, id };
+}
+
+export function myJoinRequests(userId) {
+  return getDb().prepare(`SELECT j.id, j.status, j.created_at, j.decided_at, o.id AS org_id, o.name AS org_name FROM join_request j JOIN organization o ON o.id = j.org_id
+    WHERE j.user_id = ? AND (j.status = 'PENDING' OR j.decided_at > ?) ORDER BY j.id DESC LIMIT 5`).all(userId, new Date(now().getTime() - 7 * 86_400_000).toISOString());
+}
+
+export function cancelJoinRequest(user, id) {
+  const r = getDb().prepare("UPDATE join_request SET status = 'CANCELLED', decided_at = ? WHERE id = ? AND user_id = ? AND status = 'PENDING'").run(iso(), Number(id), user.id);
+  if (!r.changes) throw new HttpError(404, 'NOT_FOUND');
+  return { ok: true };
+}
+
+export function orgJoinRequests(orgId) {
+  return getDb().prepare(`SELECT j.id, j.created_at, u.id AS user_id, u.name, u.email, u.phone FROM join_request j JOIN platform_user u ON u.id = j.user_id
+    WHERE j.org_id = ? AND j.status = 'PENDING' ORDER BY j.id`).all(orgId);
+}
+
+export function decideJoinRequest(req, id, { approve, role = 'AGENT', daily_cap }) {
+  const db = getDb();
+  const orgId = req.membership.org_id;
+  const j = db.prepare("SELECT * FROM join_request WHERE id = ? AND org_id = ? AND status = 'PENDING'").get(Number(id), orgId);
+  if (!j) throw new HttpError(404, 'NOT_FOUND');
+  const ts = iso();
+  const org = db.prepare('SELECT name FROM organization WHERE id = ?').get(orgId);
+  if (!approve) {
+    db.prepare("UPDATE join_request SET status = 'DECLINED', decided_by = ?, decided_at = ? WHERE id = ?").run(req.user.id, ts, j.id);
+    notify(j.user_id, null, 'JOIN_DECLINED', `${org.name} did not approve your request to join.`, '#/onboarding');
+    audit({ actor: req.user.id, org: orgId, action: 'JOIN_DECLINED', target: `user:${j.user_id}` });
+    return { status: 'DECLINED' };
+  }
+  const { ORG_ROLES } = req.app.locals;
+  if (!ORG_ROLES.includes(role) || role === 'ORG_OWNER') throw new HttpError(400, 'INVALID_ROLE');
+  const cap = parseCap(daily_cap);
+  tx((conn) => {
+    conn.prepare("INSERT INTO membership (org_id, user_id, role, status, daily_cap, created_at) VALUES (?,?,?,'ACTIVE',?,?) ON CONFLICT(org_id, user_id) DO UPDATE SET status='ACTIVE', role=excluded.role, daily_cap=excluded.daily_cap")
+      .run(orgId, j.user_id, role, cap, ts);
+    conn.prepare("UPDATE join_request SET status = 'APPROVED', decided_by = ?, decided_at = ? WHERE id = ?").run(req.user.id, ts, j.id);
+    // The agent works in this agency from now on: open their sessions on it.
+    conn.prepare('UPDATE session SET active_org_id = ? WHERE user_id = ? AND active_org_id IS NULL').run(orgId, j.user_id);
+  });
+  notify(j.user_id, orgId, 'JOIN_APPROVED', `Welcome to ${org.name}! You can start working now.`, '#/overview');
+  audit({ actor: req.user.id, org: orgId, action: 'JOIN_APPROVED', target: `user:${j.user_id}`, meta: { role, daily_cap: cap } });
+  return { status: 'APPROVED' };
+}

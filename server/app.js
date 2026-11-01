@@ -6,7 +6,7 @@ import { config, paypalConfigured } from './config.js';
 import { HttpError, iso, audit, randomToken, sha256, newTotpSecret, totp, dubaiDay } from './util.js';
 import {
   loadSession, csrfGuard, requireUser, requireOrgPermission, requirePlatformRole, requireRecentMfa, verifyMfa,
-  createSession, destroySession, verifyGoogleCredential, upsertGoogleUser, ROLE_PERMISSIONS, ORG_ROLES, readCookie, saveProfile, checkProfile,
+  createSession, destroySession, verifyGoogleCredential, upsertGoogleUser, ROLE_PERMISSIONS, ORG_ROLES, readCookie, saveProfile, checkProfile, hasPerm,
 } from './auth.js';
 import { entitlementSummary } from './entitlements.js';
 import * as cold from './cold.js';
@@ -69,6 +69,7 @@ export function createApp(options = {}) {
   r.post('/auth/google', ok(async (req, res) => {
     // Validate the typed details first, so a bad phone number never creates an account.
     const profile = req.body.profile ? checkProfile(req.body.profile) : null;
+    const agency = req.body.profile?.agency_id ? crm.agencyById(req.body.profile.agency_id) : null;
     const nonces = String(readCookie(req, 'aih_nonce') || '').split('.').filter(Boolean);
     const ident = await verifyGoogleCredential(String(req.body.credential || ''), nonces);
     // Spend the nonce that was used so the same Google token cannot be replayed.
@@ -78,7 +79,10 @@ export function createApp(options = {}) {
     }
     const userId = upsertGoogleUser(ident);
     if (profile) saveProfile(userId, profile);
-    crm.acceptInvitations(getDb().prepare('SELECT * FROM platform_user WHERE id = ?').get(userId));
+    const user = getDb().prepare('SELECT * FROM platform_user WHERE id = ?').get(userId);
+    crm.acceptInvitations(user);
+    // Signing in "under an agency": ask that agency to approve (an invitation already joined).
+    if (agency) crm.requestToJoin(user, agency.id);
     createSession(res, userId);
     audit({ actor: userId, action: 'LOGIN_GOOGLE' });
     return { ok: true };
@@ -108,7 +112,12 @@ export function createApp(options = {}) {
     }));
     r.get('/test/totp', requireUser, ok((req) => ({ code: totp(req.user.mfa_secret) })));
   }
-  r.post('/auth/check-profile', ok((req) => checkProfile(req.body || {})));
+  r.post('/auth/check-profile', ok((req) => {
+    const p = checkProfile(req.body || {});
+    if (req.body?.agency_id) { const org = crm.agencyById(req.body.agency_id); return { ...p, agency_id: org.id, agency_name: org.name }; }
+    return p;
+  }));
+  r.get('/public/agencies', ok((req) => crm.searchAgencies(req.query.q)));
   r.post('/auth/logout', ok((req, res) => { destroySession(req, res); return { ok: true }; }));
   r.post('/public/inquiry', ok((req) => hot.intakeInquiry({ siteKey: req.get('x-site-key') || req.body.site_key, body: req.body || {}, ip: req.ip, origin: req.get('origin') })));
   r.post('/public/search-event', ok((req) => hot.recordSearchEvent(req.body || {})));
@@ -126,6 +135,8 @@ export function createApp(options = {}) {
       my_quota: req.membership ? cold.userQuota(req.membership.org_id, req.user.id) : null,
       activation_pending: req.membership ? !!billing.pendingActivation(req.membership.org_id, req.user.id) : false,
       approvals_waiting: ['PLATFORM_OWNER', 'PLATFORM_FINANCE_ADMIN'].includes(req.user.platform_role) ? owner.approvals().counts : null,
+      join_requests: crm.myJoinRequests(req.user.id),
+      join_requests_waiting: req.membership && hasPerm(req, 'members.manage') ? crm.orgJoinRequests(req.membership.org_id).length : 0,
       memberships,
       active_org: req.membership ? memberships.find((m) => m.org_id === req.membership.org_id) : null,
       permissions: req.membership ? ROLE_PERMISSIONS[req.membership.role] : [],
@@ -140,6 +151,8 @@ export function createApp(options = {}) {
     getDb().prepare('UPDATE session SET active_org_id = ? WHERE id_hash = ?').run(Number(req.body.org_id), req.session.id_hash);
     return { ok: true };
   }));
+  r.post('/me/join-requests', requireUser, ok((req) => crm.requestToJoin(req.user, req.body?.org_id)));
+  r.delete('/me/join-requests/:id', requireUser, ok((req) => crm.cancelJoinRequest(req.user, req.params.id)));
   r.post('/me/profile', requireUser, ok((req) => saveProfile(req.user.id, req.body || {})));
   r.post('/me/preferences', requireUser, ok((req) => {
     if (!['en', 'ar', 'fr', 'ru', 'tr'].includes(req.body.locale)) throw new HttpError(400, 'UNSUPPORTED_LOCALE');
@@ -172,6 +185,8 @@ export function createApp(options = {}) {
   }));
   r.get('/org/members', requireOrgPermission('usage.view'), ok((req) => crm.members(orgId(req))));
   r.post('/org/invitations', requireOrgPermission('members.manage'), ok((req) => crm.invite(req, req.body || {})));
+  r.get('/org/join-requests', requireOrgPermission('members.manage'), ok((req) => crm.orgJoinRequests(orgId(req))));
+  r.post('/org/join-requests/:id', requireOrgPermission('members.manage'), ok((req) => crm.decideJoinRequest(req, req.params.id, req.body || {})));
   r.patch('/org/members/:userId', requireOrgPermission('members.manage'), ok((req) => crm.setMemberCap(req, req.params.userId, req.body?.daily_cap)));
   r.delete('/org/members/:userId', requireOrgPermission('members.manage'), ok((req) => { crm.removeMember(req, req.params.userId); return { ok: true }; }));
 
