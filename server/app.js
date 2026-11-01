@@ -15,6 +15,9 @@ import * as crm from './crm.js';
 import * as hot from './hot.js';
 import * as owner from './owner.js';
 import * as dashboard from './dashboard.js';
+import * as campaigns from './campaigns.js';
+import * as live from './live.js';
+import * as meta from './meta.js';
 import * as source from './source-aihome.js';
 import { deliverQueued, emailConfigured } from './mail.js';
 
@@ -44,7 +47,8 @@ export function createApp(options = {}) {
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
-  app.use(express.json({ limit: '12mb' }));
+  // Meta signs the exact bytes it sends, so its webhook keeps the raw body for the check.
+  app.use(express.json({ limit: '12mb', verify: (req, _res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/meta')) req.rawBody = Buffer.from(buf); } }));
   app.use(loadSession);
   app.use(csrfGuard);
   const r = express.Router();
@@ -125,6 +129,16 @@ export function createApp(options = {}) {
   r.post('/auth/logout', ok((req, res) => { destroySession(req, res); return { ok: true }; }));
   r.post('/public/inquiry', ok((req) => hot.intakeInquiry({ siteKey: req.get('x-site-key') || req.body.site_key, body: req.body || {}, ip: req.ip, origin: req.get('origin') })));
   r.post('/public/search-event', ok((req) => hot.recordSearchEvent(req.body || {})));
+  // Lead generation: public campaign pages, their QR code, and the Meta Lead Ads webhook.
+  r.get('/public/campaigns/:slug', ok((req) => campaigns.publicCampaign(req.params.slug)));
+  r.get('/public/campaigns/:slug/qr.svg', (req, res, next) => {
+    try {
+      const c = campaigns.publicCampaign(req.params.slug);
+      res.type('image/svg+xml').set('Cache-Control', 'public, max-age=3600').send(campaigns.qrSvg(`${publicBase(req)}/c/${c.slug}?utm_source=qr&utm_medium=offline`));
+    } catch (e) { next(e); }
+  });
+  r.get('/webhooks/meta', (req, res, next) => { try { res.type('text/plain').send(meta.verifySubscription(req.query)); } catch (e) { next(e); } });
+  r.post('/webhooks/meta', ok((req) => meta.handleWebhook({ headers: req.headers, rawBody: req.rawBody, body: req.body })));
   r.post('/webhooks/paypal', ok((req) => billing.handlePaypalWebhook(req.headers, req.body)));
 
   // --- Me / organizations ---------------------------------------------------------------
@@ -255,6 +269,10 @@ export function createApp(options = {}) {
   r.post('/crm/import', requireOrgPermission('crm.import'), ok((req) => crm.importLeadsXlsx(req, { base64: req.body.file_base64, commit: req.body.commit === true, rightsConfirmed: req.body.rights_confirmed === true })));
   r.get('/reports', requireOrgPermission('reports.view'), ok((req) => crm.reports(req)));
   r.get('/hot', requireOrgPermission('hot.view'), ok((req) => hot.orgHotView(orgId(req))));
+  r.get('/hot/live', requireOrgPermission('hot.view'), ok((req) => live.liveForMember(req)));
+  r.get('/campaigns', requireOrgPermission('hot.view'), ok((req) => campaigns.listCampaigns({ orgId: orgId(req) })));
+  r.post('/campaigns', requireOrgPermission('integrations.manage'), ok((req) => campaigns.createCampaign({ actor: req.user, orgId: orgId(req), body: req.body || {} })));
+  r.patch('/campaigns/:id', requireOrgPermission('integrations.manage'), ok((req) => campaigns.updateCampaign({ actor: req.user, id: req.params.id, orgId: orgId(req), body: req.body || {} })));
   r.get('/integrations', requireUser, ok(() => ({ sources: hot.sources(), paypal: paypalConfigured() ? 'CONNECTED' : 'NOT_CONNECTED', google_sign_in: config.googleClientId ? 'CONNECTED' : 'NOT_CONNECTED' })));
 
   // --- Platform owner / finance ---------------------------------------------------------
@@ -320,6 +338,13 @@ export function createApp(options = {}) {
   }));
   r.post('/owner/subscriptions/:id/terminate', FINANCE, requireRecentMfa, ok((req) => { billing.terminateSubscription({ subscriptionId: req.params.id, actor: req.user, reason: req.body.reason }); return { ok: true }; }));
   r.get('/owner/hot', OWNER, ok(() => ({ pricing: hot.pricing(), pool: hot.pool(), sources: hot.sources(), site_keys: hot.siteKeys(), auto_distribute: flag(hot.AUTO_FLAG), queue: hot.distributionQueue() })));
+  r.get('/owner/hot/live', OWNER, ok(() => live.liveForOwner()));
+  r.get('/owner/campaigns', OWNER, ok(() => ({ ...campaigns.listCampaigns({}), channels: campaigns.CHANNELS })));
+  r.post('/owner/campaigns', OWNER, ok((req) => campaigns.createCampaign({ actor: req.user, orgId: req.body?.org_id ? Number(req.body.org_id) : null, body: req.body || {} })));
+  r.patch('/owner/campaigns/:id', OWNER, ok((req) => campaigns.updateCampaign({ actor: req.user, id: req.params.id, owner: true, body: req.body || {} })));
+  r.get('/owner/meta', OWNER, ok(() => meta.metaStatus()));
+  r.post('/owner/meta/pages', OWNER, requireRecentMfa, ok((req) => meta.connectPage({ actor: req.user, ...(req.body || {}) })));
+  r.delete('/owner/meta/pages/:id', OWNER, requireRecentMfa, ok((req) => meta.removePage({ actor: req.user, id: req.params.id })));
   r.post('/owner/hot/distribute', OWNER, ok((req) => hot.distributeWaiting({ actor: req.user })));
   r.post('/owner/hot/site-keys', OWNER, ok((req) => hot.createSiteKey({ actor: req.user, orgId: req.body.org_id || null, label: req.body.label, allowedOrigin: req.body.allowed_origin })));
   r.post('/owner/hot/site-keys/:key/revoke', OWNER, ok((req) => hot.revokeSiteKey({ actor: req.user, key: req.params.key })));
@@ -347,6 +372,8 @@ export function createApp(options = {}) {
 
   app.use('/api', r);
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'NOT_FOUND')));
+  // Hosted campaign landing pages (/c/<slug>); on Vercel the same rewrite is in vercel.json.
+  app.get('/c/:slug', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'campaign.html')));
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.get(['/investor-history', '/pricing'], (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
 

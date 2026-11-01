@@ -5,6 +5,8 @@ export const RTL = new Set(['ar']);
 const S = {
   // nav
   overview: ['Overview', 'نظرة عامة', 'Vue d’ensemble', 'Обзор', 'Genel bakış'],
+  live_leads: ['Live leads', 'العملاء المباشرون', 'Leads en direct', 'Лиды в реальном времени', 'Canlı talepler'],
+  lead_generation: ['Lead generation', 'توليد العملاء', 'Génération de leads', 'Привлечение лидов', 'Talep üretimi'],
   guide: ['Guide', 'الدليل', 'Guide', 'Руководство', 'Rehber'],
   crm_dashboard: ['CRM dashboard', 'لوحة إدارة العملاء', 'Tableau de bord CRM', 'Панель CRM', 'CRM paneli'],
   crm_monitor: ['CRM monitor', 'مراقبة إدارة العملاء', 'Suivi CRM', 'Мониторинг CRM', 'CRM izleme'],

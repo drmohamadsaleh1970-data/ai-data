@@ -512,6 +512,43 @@ CREATE TABLE IF NOT EXISTS owner_export_job (
   file_name TEXT,
   created_at TEXT NOT NULL
 );
+-- Lead generation campaigns: a hosted landing page (/c/<slug>) with its own website key.
+-- org_id NULL = the AI-DATA Hot pool (owner campaigns).
+CREATE TABLE IF NOT EXISTS lead_campaign (
+  id INTEGER PRIMARY KEY,
+  org_id INTEGER,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  channel TEXT NOT NULL,
+  headline TEXT NOT NULL,
+  description TEXT,
+  area TEXT,
+  property_type TEXT,
+  language TEXT NOT NULL DEFAULT 'en',
+  privacy_url TEXT,
+  spend_aed INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','PAUSED')),
+  site_key TEXT NOT NULL,
+  created_by INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_lead_campaign_org ON lead_campaign(org_id);
+-- Facebook/Instagram Pages connected for Meta Lead Ads. The Page access token is stored
+-- encrypted (AES-256-GCM, key derived from META_APP_SECRET).
+CREATE TABLE IF NOT EXISTS meta_page (
+  id INTEGER PRIMARY KEY,
+  page_id TEXT NOT NULL UNIQUE,
+  page_name TEXT NOT NULL,
+  org_id INTEGER,
+  campaign_id INTEGER,
+  token_enc TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ACTIVE',
+  last_lead_at TEXT,
+  last_error TEXT,
+  created_by INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
 `;
 
 let db;
@@ -545,7 +582,11 @@ const ADDED_COLUMNS = [
   ['crm_contact', 'best_time', 'TEXT'],              // MORNING | AFTERNOON | EVENING | ANY
   ['crm_contact', 'tone', 'TEXT'],                   // FORMAL | FRIENDLY
   ['lead_activity', 'template_id', 'INTEGER'],
-  ['hot_lead_pool', 'allocation_method', 'TEXT'],     // MANUAL (owner chose) | AUTO (shared in turn)       // message template used for this contact, if any
+  ['hot_lead_pool', 'allocation_method', 'TEXT'],
+  ['hot_lead_pool', 'campaign_id', 'INTEGER'],         // lead generation campaign that produced it
+  ['hot_lead_pool', 'utm_json', 'TEXT'],               // utm_source/medium/campaign/content/term
+  ['crm_lead', 'campaign_id', 'INTEGER'],
+  ['crm_lead', 'utm_json', 'TEXT'],     // MANUAL (owner chose) | AUTO (shared in turn)       // message template used for this contact, if any
 ];
 
 function addColumns(conn, pg) {

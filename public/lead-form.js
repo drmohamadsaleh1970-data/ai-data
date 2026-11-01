@@ -6,7 +6,9 @@
 //   <script src="https://YOUR-AI-DATA-ADDRESS/lead-form.js" defer></script>
 //
 // Optional attributes: data-lang (en, ar, fr, ru, tr), data-privacy-url, data-notice-version,
-// data-color (button colour), data-area (pre-filled area). Submissions go to
+// data-color (button colour), data-area (pre-filled area), data-campaign (campaign page).
+// utm_source / utm_medium / utm_campaign / utm_content / utm_term in the page address are
+// sent with the enquiry, so each lead shows which ad or channel it came from. Submissions go to
 // POST /api/public/inquiry with the person's consent recorded; the site key decides whether
 // the lead lands in the AI-DATA Hot pool or an agency's CRM.
 (() => {
@@ -45,6 +47,12 @@
   };
   const FIELD = { width: '100%', boxSizing: 'border-box', padding: '10px 12px', border: '1px solid #c9d1dc', borderRadius: '8px', font: 'inherit', background: '#fff', color: '#111' };
   const field = (label, input) => el('label', {}, { display: 'grid', gap: '4px', fontSize: '14px' }, [label, input]);
+  const utm = () => {
+    const q = new URLSearchParams(location.search);
+    const out = {};
+    for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']) if (q.get(k)) out[k] = q.get(k).slice(0, 100);
+    return out;
+  };
   const newEventId = () => (window.crypto?.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
 
   function mount(host) {
@@ -94,6 +102,7 @@
         area: area.value.trim() || undefined, property_type: type.value || undefined, bedrooms: beds.value === '' ? undefined : Number(beds.value),
         budget_max_aed: budget.value ? Number(budget.value) : undefined, message: message.value.trim() || undefined, website: trap.value || undefined,
         consent_contact: consent.checked, consent_marketing: marketing.checked, notice_version: host.dataset.noticeVersion || 'v1', language: lang, client_event_id: eventId,
+        campaign: host.dataset.campaign || undefined, ...utm(),
       };
       try {
         const res = await fetch(api, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Site-Key': key }, body: JSON.stringify(body) });

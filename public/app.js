@@ -115,12 +115,13 @@ function setLang(l, persist = true) {
 }
 
 const APP_ROUTES = {
-  overview: viewOverview, dashboard: viewDashboard, guide: viewGuide, 'investor-history': viewInvestorHistory, 'my-cold': viewMyCold, hot: viewHot, crm: viewCrm,
+  overview: viewOverview, dashboard: viewDashboard, guide: viewGuide, leadgen: viewLeadgen, live: viewLive, 'investor-history': viewInvestorHistory, 'my-cold': viewMyCold, hot: viewHot, crm: viewCrm,
   team: viewTeam, reports: viewReports, billing: viewBilling, integrations: viewIntegrations, settings: viewSettings,
   onboarding: viewOnboarding, owner: viewOwner, activate: viewActivate, profile: viewProfile,
 };
 
 async function render() {
+  stopLive();
   const app = document.getElementById('app');
   const { parts, query } = parseHash();
   document.body.classList.remove('nav-open');
@@ -141,7 +142,7 @@ async function render() {
     if (!APP_ROUTES[name] || name === '' || name === 'signin') name = hasOrg ? 'overview' : isFinance() ? 'owner' : 'onboarding';
     // Everyone gives a name and mobile number once; until then this is the only page.
     if (!state.me.profile_complete && name !== 'activate') name = 'profile';
-    if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations', 'profile', 'guide'].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
+    if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations', 'profile', 'guide', ...(isOwner() ? ['leadgen', 'live'] : [])].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
     const html = await APP_ROUTES[name](parts.slice(1), query);
     app.innerHTML = shell(name, parts, html);
     afterRender();
@@ -185,6 +186,8 @@ function shell(name, parts, content) {
     if (can('cold.search')) nav += link('#/investor-history', 'investor_history', '❄', name === 'investor-history');
     if (can('cold.search')) nav += link('#/my-cold', 'my_cold', '▤', name === 'my-cold');
     if (can('hot.view')) nav += link('#/hot', 'hot_leads', '🔥', name === 'hot');
+    if (can('hot.view') && !isOwner()) nav += link('#/live', 'live_leads', '📡', name === 'live');
+    if (can('hot.view') && !isOwner()) nav += link('#/leadgen', 'lead_generation', '📣', name === 'leadgen');
     if (can('crm.all') || can('crm.own')) nav += link('#/crm', 'crm', '☰', name === 'crm');
     nav += link('#/team', 'team', '◉', name === 'team');
     if (can('reports.view')) nav += link('#/reports', 'reports', '▲', name === 'reports');
@@ -204,6 +207,8 @@ function shell(name, parts, content) {
       nav += link('#/owner/crm', 'crm_monitor', '▦', name === 'owner' && sub === 'crm');
       nav += link('#/owner/data', 'master_data', '⛁', name === 'owner' && sub === 'data');
       nav += link('#/owner/hot', 'hot_admin', '🔥', name === 'owner' && sub === 'hot');
+      nav += link('#/live', 'live_leads', '📡', name === 'live');
+      nav += link('#/leadgen', 'lead_generation', '📣', name === 'leadgen');
       nav += link('#/owner/governance', 'governance', '⚖', name === 'owner' && sub === 'governance');
       nav += link('#/owner/audit', 'audit', '≣', name === 'owner' && sub === 'audit');
     }
@@ -1030,6 +1035,178 @@ async function viewGuide(_p, query) {
   <div class="card" style="margin-top:16px"><h3 style="margin-top:0">Questions</h3>${role.faq.map(([q, a]) => `<details class="gfaq"><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join('')}</div>`;
 }
 
+// ---------------------------------------------------------------------------------
+// Lead generation (campaign pages, tracking, Meta Lead Ads) and the Live leads board
+// ---------------------------------------------------------------------------------
+const LG_CHANNELS = ['WHATSAPP', 'INSTAGRAM', 'FACEBOOK', 'GOOGLE', 'TIKTOK', 'LINKEDIN', 'EMAIL', 'SMS', 'QR_PRINT', 'WEBSITE', 'OTHER'];
+const LG_TAGS = [['whatsapp', 'WhatsApp'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['tiktok', 'TikTok'], ['email', 'Email'], ['sms', 'SMS']];
+const campaignUrl = (slug, src) => `${location.origin}/c/${encodeURIComponent(slug)}${src ? `?utm_source=${src}` : ''}`;
+
+async function viewLeadgen() {
+  const owner = isOwner();
+  const manage = owner || can('integrations.manage');
+  const [data, orgs, metaInfo] = await Promise.all([
+    GET(owner ? '/api/owner/campaigns' : '/api/campaigns'),
+    owner ? GET('/api/owner/dashboard').then((d) => d.organizations) : null,
+    owner ? GET('/api/owner/meta') : null,
+  ]);
+  const t0 = data.totals;
+  const list = data.campaigns;
+  const cpl = t0.received && t0.spend_aed ? Math.round(t0.spend_aed / t0.received) : null;
+  const statBox = (l, v, sub = '') => `<div class="card"><div class="stat"><span class="l">${l}</span><span class="v">${v}</span></div>${sub ? `<div class="small muted">${sub}</div>` : ''}</div>`;
+  const card = (c) => {
+    const url = campaignUrl(c.slug);
+    const share = `https://wa.me/?text=${encodeURIComponent(`${c.headline}\n${campaignUrl(c.slug, 'whatsapp')}`)}`;
+    return `<div class="card lg-card" data-campaign="${esc(c.slug)}">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+        <div><h3 style="margin:0">${esc(c.name)}</h3><div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap"><span class="badge ${c.status === 'ACTIVE' ? 'ok' : 'warn'}">${c.status === 'ACTIVE' ? 'Live' : 'Paused'}</span><span class="badge">${esc(human(c.channel))}</span>
+          <span class="badge ${c.destination === 'AIHOME_HOT_POOL' ? 'hot' : ''}">${c.destination === 'AIHOME_HOT_POOL' ? '→ AI-DATA Hot pool' : `→ ${esc(c.org_name || 'CRM')}`}</span></div></div>
+        ${manage ? `<button class="btn sm" data-act="lg-toggle" data-id="${c.id}" data-status="${c.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'}">${c.status === 'ACTIVE' ? 'Pause' : 'Resume'}</button>` : ''}
+      </div>
+      <p class="small muted" style="margin:8px 0">${esc(c.headline)}${c.area ? ` · ${esc(c.area)}` : ''}</p>
+      <div class="lg-body">
+        <div class="lg-qr"><img src="/api/public/campaigns/${encodeURIComponent(c.slug)}/qr.svg" alt="QR code for ${esc(c.name)}" width="132" height="132"><a class="small" href="/api/public/campaigns/${encodeURIComponent(c.slug)}/qr.svg" download="${esc(c.slug)}-qr.svg">Download QR</a></div>
+        <div style="flex:1;min-width:220px;display:grid;gap:8px">
+          <div class="row" style="gap:6px"><input type="text" readonly value="${esc(url)}" aria-label="Campaign link for ${esc(c.name)}" style="flex:1;min-width:160px" class="mono small"><button class="btn sm" data-act="copy-text" data-text="${esc(url)}">Copy</button><a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener">Open</a></div>
+          <div class="row" style="gap:6px;flex-wrap:wrap"><span class="small muted">Tagged link for:</span>${LG_TAGS.map(([k, label]) => `<button class="btn sm ghost" data-act="copy-text" data-text="${esc(campaignUrl(c.slug, k))}" title="Copy link tagged ${label}">${label}</button>`).join('')}</div>
+          <div class="row" style="gap:6px"><a class="btn sm" href="${esc(share)}" target="_blank" rel="noopener">💬 Share on WhatsApp</a></div>
+        </div>
+      </div>
+      <div class="lg-stats">
+        ${[['Leads', c.received], ['Contacted', c.contacted], ['Qualified', c.qualified], ['Won', c.won]].map(([l, v]) => `<div><span class="small muted">${l}</span><b>${fmtNum(v)}</b></div>`).join('')}
+        <div><span class="small muted">Spend</span><b>${fmtAED(c.spend_aed)}</b></div>
+        <div><span class="small muted">Cost / lead</span><b>${c.cost_per_lead_aed == null ? '—' : fmtAED(c.cost_per_lead_aed)}</b></div>
+        <div><span class="small muted">Cost / won</span><b>${c.cost_per_won_aed == null ? '—' : fmtAED(c.cost_per_won_aed)}</b></div>
+      </div>
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:8px">
+        <div class="chips">${Object.entries(c.by_source).sort((a, b) => b[1] - a[1]).map(([s, n]) => `<span class="chip">${esc(s)}: ${fmtNum(n)}</span>`).join('') || '<span class="small muted">No leads yet</span>'}${c.waiting_in_pool ? `<span class="chip">⏳ ${fmtNum(c.waiting_in_pool)} waiting in pool</span>` : ''}</div>
+        ${manage ? `<form class="row" data-form="lg-spend" data-id="${c.id}" style="gap:6px"><input type="number" name="spend_aed" min="0" step="100" value="${c.spend_aed}" aria-label="Spend for ${esc(c.name)} (AED)" style="width:130px"><button class="btn sm">Save spend</button></form>` : ''}
+      </div>
+      <div class="small muted" style="margin-top:6px">Last lead: ${c.last_lead_at ? fmtDT(c.last_lead_at) : 'none yet'}</div>
+    </div>`;
+  };
+  const metaCard = !owner ? '' : `<div class="card" style="margin-top:16px"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h3 style="margin:0">Meta Lead Ads (Facebook / Instagram)</h3>${statusBadge(metaInfo.configured && metaInfo.pages.length ? 'CONNECTED' : 'NOT_CONNECTED')}</div>
+    ${metaInfo.configured ? `<p class="small muted">In your Meta app → Webhooks → Page, subscribe to <b>leadgen</b> with this callback address and your verify token:</p><div class="code">${esc(location.origin + metaInfo.webhook_path)}</div>`
+      : `<div class="banner warn" style="margin-top:10px">Not set up on the server yet. Add <b>META_APP_SECRET</b> and <b>META_VERIFY_TOKEN</b> in Vercel → Settings → Environment Variables, redeploy, then connect your Pages here. Until then, use Zapier/Make (see Hot pricing & pool).</div>`}
+    ${metaInfo.pages.length ? `<div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Page</th><th>Leads go to</th><th>Campaign</th><th>Last lead</th><th></th></tr></thead><tbody>${metaInfo.pages.map((p) => `<tr><td><b>${esc(p.page_name)}</b><br><span class="small muted mono">${esc(p.page_id)}</span>${p.last_error ? `<br><span class="small" style="color:var(--bad)">${esc(p.last_error)}</span>` : ''}</td><td>${p.org_id ? esc(p.org_name) : 'AI-DATA Hot pool'}</td><td>${esc(p.campaign_name || '—')}</td><td class="small">${p.last_lead_at ? fmtDT(p.last_lead_at) : '—'}</td><td><button class="btn sm ghost" data-act="meta-remove" data-id="${p.id}">Remove</button></td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${metaInfo.configured ? `<form class="grid" data-form="meta-connect" style="gap:8px;margin-top:12px"><h3 style="margin:0">Connect a Page</h3>
+      <div class="grid g2" style="gap:8px"><label class="field">Facebook Page ID<input type="text" name="page_id" required inputmode="numeric" placeholder="e.g. 102345678901234"></label><label class="field">Page name<input type="text" name="page_name" maxlength="120" placeholder="e.g. AI Home Dubai"></label></div>
+      <label class="field">Page access token<input type="password" name="access_token" required autocomplete="off" placeholder="Token with leads_retrieval permission"></label>
+      <div class="grid g2" style="gap:8px"><label class="field">Leads go to<select name="org_id"><option value="">AI-DATA Hot pool</option>${orgs.map((o) => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select></label>
+        <label class="field">Campaign (optional)<select name="campaign_id"><option value="">—</option>${list.map((c) => `<option value="${c.id}">${esc(c.name)} (${c.org_id ? esc(c.org_name) : 'Hot pool'})</option>`).join('')}</select></label></div>
+      <button class="btn primary" style="justify-self:start">Connect Page</button><p class="small muted" style="margin:0">The token is stored encrypted. Asks for your authenticator code.</p></form>` : ''}</div>`;
+  const form = !manage ? '' : `<form class="card grid" data-form="lg-create" style="gap:10px"><h3 style="margin:0">New campaign page</h3>
+    <p class="small muted" style="margin:0">Creates a ready-to-share page with an enquiry form, a link and a QR code. ${owner ? 'Choose whether leads go to your Hot pool or straight to one account.' : 'Leads go straight to your CRM as Hot leads.'}</p>
+    <div class="grid g2" style="gap:8px"><label class="field">Campaign name<input type="text" name="name" required maxlength="120" placeholder="e.g. Marina 2BR launch – Instagram"></label>
+      <label class="field">Main channel<select name="channel">${LG_CHANNELS.map((c) => `<option value="${c}">${esc(human(c))}</option>`).join('')}</select></label></div>
+    <label class="field">Headline on the page<input type="text" name="headline" required maxlength="160" placeholder="e.g. New 2-bedroom homes in Dubai Marina from AED 1.9M"></label>
+    <label class="field">Description<textarea name="description" rows="3" maxlength="1200" placeholder="Payment plan, handover date, key features…"></textarea></label>
+    <div class="grid g3" style="gap:8px"><label class="field">Area<input type="text" name="area" maxlength="80" placeholder="Dubai Marina"></label>
+      <label class="field">Property type<select name="property_type"><option value="">Any</option>${['Apartment', 'Villa', 'Townhouse', 'Penthouse', 'Plot', 'Office'].map((x) => `<option>${x}</option>`).join('')}</select></label>
+      <label class="field">Page language<select name="language"><option value="en">English</option><option value="ar">العربية</option><option value="fr">Français</option><option value="ru">Русский</option><option value="tr">Türkçe</option></select></label></div>
+    <div class="grid g2" style="gap:8px"><label class="field">Privacy notice address<input type="url" name="privacy_url" placeholder="https://www.ai-home.world/privacy"></label>
+      <label class="field">Ad spend so far (AED, optional)<input type="number" name="spend_aed" min="0" step="100" placeholder="0"></label></div>
+    ${owner ? `<label class="field">Leads go to<select name="org_id"><option value="">AI-DATA Hot pool (shared with customers who have credits)</option>${orgs.map((o) => `<option value="${o.id}">${esc(o.name)} — straight to its CRM</option>`).join('')}</select></label>` : ''}
+    <button class="btn primary" style="justify-self:start">Create campaign page</button></form>`;
+  return `<div class="page-head"><div><div class="kicker">${owner ? t('owner_console') : esc(state.me.active_org.name)}</div><h1>Lead generation</h1><p class="muted" style="margin:4px 0 0">Campaign pages, links and QR codes for your ads and posts, with the results of each.</p></div>
+    <div class="spacer"></div><a class="btn sm" href="#/live">📡 Live leads →</a></div>
+  <div class="grid g4">${statBox('Leads from campaigns', fmtNum(t0.received), `${fmtNum(list.filter((c) => c.status === 'ACTIVE').length)} live campaign${list.filter((c) => c.status === 'ACTIVE').length === 1 ? '' : 's'}`)}
+    ${statBox('Contacted', fmtNum(t0.contacted || 0), `${fmtNum(t0.qualified || 0)} qualified`)}${statBox('Won', fmtNum(t0.won), fmtAED(t0.won_value_aed || 0))}${statBox('Spend', fmtAED(t0.spend_aed), `Cost per lead: ${cpl == null ? '—' : fmtAED(cpl)}`)}</div>
+  <div class="grid g2" style="margin-top:16px;align-items:start">
+    <div class="grid" style="gap:16px">${list.length ? list.map(card).join('') : '<div class="card empty">No campaigns yet. Create the first one.</div>'}</div>
+    <div class="grid" style="gap:16px;align-content:start">${form}
+      <div class="card"><h3 style="margin-top:0">How to use a campaign page</h3><ol class="small" style="margin:0;padding-inline-start:18px;display:grid;gap:6px">
+        <li>Create the page and copy its link.</li><li>Put the <b>tagged link</b> for each place you post (Instagram bio, Facebook ad, Google ad, WhatsApp status…), so you see which works best.</li>
+        <li>Print the <b>QR code</b> on flyers, boards or show stands.</li><li>Every enquiry arrives as a 🔥 Hot lead with the person's consent, visible on <a href="#/live">Live leads</a>.</li>
+        <li>Enter the ad spend to see the cost per lead and per deal won.</li></ol></div></div>
+  </div>
+  ${metaCard}`;
+}
+
+// --- Live leads board ------------------------------------------------------------
+let liveTimers = [];
+function stopLive() { liveTimers.forEach(clearInterval); liveTimers = []; document.title = document.title.replace(/^\(\d+\) /, ''); }
+const liveSoundOn = () => { try { return localStorage.getItem('aih_live_sound') === '1'; } catch { return false; } };
+function liveBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = 880; g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    o.connect(g).connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.5);
+  } catch { /* no audio */ }
+}
+function liveClock(due, contactedAt, createdAt) {
+  if (contactedAt) return `<span class="badge ok">✓ contacted in ${fmtMins(Math.max(0, Math.round((Date.parse(contactedAt) - Date.parse(createdAt)) / 60000)))}</span>`;
+  if (!due) return '<span class="badge">waiting</span>';
+  return `<span class="live-clock" data-due="${esc(due)}"></span>`;
+}
+function tickLiveClocks() {
+  for (const el of document.querySelectorAll('.live-clock')) {
+    const ms = Date.parse(el.dataset.due) - Date.now();
+    const m = Math.floor(Math.abs(ms) / 60000), s = Math.floor((Math.abs(ms) % 60000) / 1000);
+    const txt = `${m}:${String(s).padStart(2, '0')}`;
+    el.textContent = ms >= 0 ? `⏱ ${txt} left` : `⚠ ${txt} overdue`;
+    el.className = `live-clock badge ${ms < 0 ? 'bad' : ms < 5 * 60000 ? 'warn' : 'ok'}`;
+  }
+}
+function liveBody(d) {
+  const owner = d.scope === 'platform';
+  const fresh = state.live.fresh;
+  const leads = [...d.leads].sort((a, b) => (!a.first_contacted_at && b.first_contacted_at ? -1 : a.first_contacted_at && !b.first_contacted_at ? 1 : a.first_contacted_at ? (a.created_at < b.created_at ? 1 : -1) : (a.first_contact_due || '') < (b.first_contact_due || '') ? -1 : 1));
+  const s = d.stats;
+  const ago = (ts) => { const m = Math.max(0, Math.round((Date.now() - Date.parse(ts)) / 60000)); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : fmtDT(ts); };
+  return `<div class="grid g4">
+    <div class="card"><div class="stat hot"><span class="l">New today</span><span class="v">${fmtNum(s.new_today)}</span></div></div>
+    <div class="card"><div class="stat"><span class="l">Waiting for first contact</span><span class="v">${fmtNum(s.waiting_first_contact)}</span></div></div>
+    <div class="card"><div class="stat"><span class="l">Overdue</span><span class="v" style="${s.overdue ? 'color:var(--bad)' : ''}">${fmtNum(s.overdue)}</span></div></div>
+    <div class="card"><div class="stat"><span class="l">${owner ? 'Waiting in Hot pool' : 'Updated'}</span><span class="v" style="font-size:22px">${owner ? fmtNum(s.waiting_in_pool) : new Date(d.server_time).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div></div>
+  </div>
+  <div class="card" style="margin-top:16px"><h3 style="margin-top:0">${owner ? 'Hot leads in every account' : d.scope === 'mine' ? 'Your Hot leads' : 'Hot leads'} · last 48 hours and anyone still waiting</h3>
+    <div class="live-list">${leads.map((l) => `<div class="live-row ${fresh.has(`l${l.id}`) ? 'live-new' : ''} ${!l.first_contacted_at && l.first_contact_due && l.first_contact_due < d.server_time ? 'live-late' : ''}">
+      <div class="live-main"><b>${owner ? esc(l.full_name) : `<a href="#/crm/lead/${l.id}">${esc(l.full_name)}</a>`}</b>${fresh.has(`l${l.id}`) ? ' <span class="badge hot">NEW</span>' : ''}
+        <div class="small muted">${[l.area, l.campaign ? `📣 ${l.campaign}` : null, l.source].filter(Boolean).map(esc).join(' · ')}</div></div>
+      ${owner ? `<div class="small">${esc(l.org_name || '')}</div>` : ''}
+      <div class="small">${l.assignee_name ? `👤 ${esc(l.assignee_name)}` : '<span class="muted">unassigned</span>'}</div>
+      <div class="small muted">${ago(l.created_at)}</div>
+      <div>${liveClock(l.first_contact_due, l.first_contacted_at, l.created_at)}</div>
+      ${owner ? `<a class="btn sm" href="#/owner/crm/${l.org_id}">Open</a>` : `<a class="btn sm ${l.first_contacted_at ? '' : 'primary'}" href="#/crm/lead/${l.id}">${l.first_contacted_at ? 'Open' : 'Contact now'}</a>`}
+    </div>`).join('') || '<div class="empty">No Hot leads yet. New enquiries appear here within seconds.</div>'}</div></div>
+  ${owner ? `<div class="card" style="margin-top:16px"><h3 style="margin-top:0">AI-DATA Hot pool</h3><div class="live-list">${d.pool.map((p) => `<div class="live-row ${fresh.has(`p${p.id}`) ? 'live-new' : ''}">
+      <div class="live-main"><b>${esc(p.full_name)}</b>${fresh.has(`p${p.id}`) ? ' <span class="badge hot">NEW</span>' : ''}<div class="small muted">${[p.area, p.campaign ? `📣 ${p.campaign}` : null, p.source].filter(Boolean).map(esc).join(' · ')}</div></div>
+      <div class="small muted">${ago(p.received_at)}</div>
+      <div>${p.allocated_org_name ? `<span class="badge ok">${esc(p.allocated_org_name)}</span> <span class="badge ${p.allocation_method === 'AUTO' ? 'gold' : ''}">${p.allocation_method === 'AUTO' ? 'Auto' : 'Manual'}</span>` : '<span class="badge warn">⏳ waiting</span>'}</div>
+      ${p.allocated_org_name ? '' : '<a class="btn sm" href="#/owner/hot">Allocate</a>'}</div>`).join('') || '<div class="empty">Pool is empty.</div>'}</div></div>` : ''}`;
+}
+async function pollLive(first = false) {
+  const d = await GET(isOwner() ? '/api/owner/hot/live' : '/api/hot/live');
+  const ids = new Set([...d.leads.map((l) => `l${l.id}`), ...(d.pool || []).map((p) => `p${p.id}`)]);
+  const fresh = first ? new Set() : new Set([...ids].filter((x) => !state.live.seen.has(x)));
+  for (const x of fresh) state.live.fresh.add(x);
+  state.live.seen = ids;
+  if (fresh.size) {
+    state.live.unseen += fresh.size;
+    if (document.hidden || !document.hasFocus()) document.title = `(${state.live.unseen}) ${document.title.replace(/^\(\d+\) /, '')}`;
+    if (liveSoundOn()) liveBeep();
+    toast(`🔥 ${fresh.size} new Hot lead${fresh.size > 1 ? 's' : ''}`);
+  }
+  return d;
+}
+async function viewLive() {
+  state.live = { seen: new Set(), fresh: new Set(), unseen: 0 };
+  const d = await pollLive(true);
+  setTimeout(() => {
+    tickLiveClocks();
+    liveTimers.push(setInterval(tickLiveClocks, 1000));
+    liveTimers.push(setInterval(async () => {
+      if (parseHash().parts[0] !== 'live') return stopLive();
+      try { const nd = await pollLive(); const body = document.getElementById('live-body'); if (body) { body.innerHTML = liveBody(nd); tickLiveClocks(); } } catch { /* next poll retries */ }
+    }, 8000));
+  }, 0);
+  return `<div class="page-head"><div><div class="kicker">${isOwner() ? t('owner_console') : esc(state.me.active_org.name)}</div><h1>📡 Live leads</h1><p class="muted" style="margin:4px 0 0">New Hot leads appear here by themselves, with the countdown to first contact. <span class="live-dot"></span> Live</p></div>
+    <div class="spacer"></div><button class="btn sm" data-act="live-sound">${liveSoundOn() ? '🔔 Sound on' : '🔕 Sound off'}</button>${isOwner() || can('integrations.manage') ? '<a class="btn sm" href="#/leadgen">📣 Lead generation</a>' : ''}</div>
+  <div id="live-body">${liveBody(d)}</div>`;
+}
+
 async function viewTeam() {
   const manage = can('members.manage');
   const [m, joins] = await Promise.all([GET('/api/org/members'), manage ? GET('/api/org/join-requests') : Promise.resolve([])]);
@@ -1450,6 +1627,10 @@ const actions = {
     const r = await POST('/api/owner/hot/distribute');
     toast(`${r.allocated} lead${r.allocated === 1 ? '' : 's'} sent · ${r.still_waiting} still waiting`); render();
   },
+  'copy-text': async (el) => { try { await navigator.clipboard.writeText(el.dataset.text); toast('Link copied ✓'); } catch { prompt('Copy this link:', el.dataset.text); } },
+  'lg-toggle': async (el) => { await api('PATCH', `${isOwner() ? '/api/owner' : '/api'}/campaigns/${el.dataset.id}`, { status: el.dataset.status }); toast(el.dataset.status === 'ACTIVE' ? 'Campaign live ✓' : 'Campaign paused'); render(); },
+  'meta-remove': async (el) => { if (!confirm('Disconnect this Page? New Facebook/Instagram leads from it will stop arriving.')) return; await withMfa(() => api('DELETE', `/api/owner/meta/pages/${el.dataset.id}`)); toast('Page disconnected'); render(); },
+  'live-sound': () => { const on = !liveSoundOn(); try { localStorage.setItem('aih_live_sound', on ? '1' : '0'); } catch { /* not kept */ } if (on) liveBeep(); render(); },
   'owner-open-lead': async (el) => { const l = await GET(`/api/owner/orgs/${el.dataset.org}/crm/leads/${el.dataset.id}`); openModal(ownerLeadModal(el.dataset.org, l)); },
   'remove-member': async (el) => { if (confirm('Remove this member?')) { await api('DELETE', `/api/org/members/${el.dataset.id}`); render(); } },
   'pay-paypal': async (el) => { try { const r = await POST('/api/billing/paypal', { plan: el.dataset.plan }); if (r.approve_url) location.href = r.approve_url; } catch (e) { toast(errMsg(e), true); } },
@@ -1571,6 +1752,18 @@ const forms = {
   'owner-search': async (f) => { const filter = readFilterForm(f); delete filter.field; state.owner.filter = filter; state.owner.counts = null; render(); },
   'crm-filter': (f) => { const q = new URLSearchParams(Object.fromEntries([...new FormData(f)].filter(([, v]) => v))).toString(); go('#/crm' + (q ? '?' + q : '')); },
   'lead-activity': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/activities`, { type: f.type.value, body: f.body.value, ...(f.template_id?.value ? { template_id: Number(f.template_id.value) } : {}) }); toast('✓'); render(); },
+  'lg-create': async (f) => {
+    const body = { name: f.name.value, channel: f.channel.value, headline: f.headline.value, description: f.description.value, area: f.area.value, property_type: f.property_type.value, language: f.language.value, privacy_url: f.privacy_url.value, spend_aed: f.spend_aed.value };
+    if (f.org_id) body.org_id = f.org_id.value ? Number(f.org_id.value) : null;
+    await POST(isOwner() ? '/api/owner/campaigns' : '/api/campaigns', body);
+    toast('Campaign page created ✓'); render();
+  },
+  'lg-spend': async (f) => { await api('PATCH', `${isOwner() ? '/api/owner' : '/api'}/campaigns/${f.dataset.id}`, { spend_aed: f.spend_aed.value }); toast('Spend saved ✓'); render(); },
+  'meta-connect': async (f) => {
+    const body = { page_id: f.page_id.value, page_name: f.page_name.value, access_token: f.access_token.value, org_id: f.org_id.value ? Number(f.org_id.value) : null, campaign_id: f.campaign_id.value ? Number(f.campaign_id.value) : null };
+    await withMfa(() => POST('/api/owner/meta/pages', body));
+    toast('Page connected ✓'); render();
+  },
   'lead-prefs': async (f) => { await api('PATCH', `/api/crm/leads/${f.dataset.id}`, { preferences: { preferred_channel: f.preferred_channel.value, best_time: f.best_time.value, tone: f.tone.value, preferred_language: f.preferred_language.value } }); toast('Saved ✓'); render(); },
   'lead-task': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/tasks`, { title: f.title.value, due_at: new Date(f.due_at.value).toISOString() }); toast('✓'); render(); },
   invite: async (f) => {
