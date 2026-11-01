@@ -244,3 +244,23 @@ export function deleteAllInvestorData({ actor, confirm }) {
     return { investors, transactions, import_jobs: jobs };
   });
 }
+
+// --- Owner: import history ---------------------------------------------------------------
+// Removes entries from the import log only; investor records stay (imports do not record
+// which batch a record came from — use "Delete all investor data" to remove records).
+// An import still marked RUNNING after an hour was interrupted and can be removed too.
+const stuckBefore = () => new Date(Date.now() - 3_600_000).toISOString();
+
+export function deleteImportJob({ actor, id }) {
+  const r = getDb().prepare("DELETE FROM source_import_job WHERE id = ? AND (status != 'RUNNING' OR started_at < ?)").run(Number(id), stuckBefore());
+  if (!r.changes) throw new HttpError(404, 'NOT_FOUND', 'Import not found or still running.');
+  audit({ actor: actor.id, action: 'OWNER_IMPORT_HISTORY_DELETED', target: `import:${id}` });
+  return { deleted: 1 };
+}
+
+export function clearImportHistory({ actor, confirm }) {
+  confirmed(confirm, 'CLEAR IMPORT HISTORY');
+  const deleted = getDb().prepare("DELETE FROM source_import_job WHERE status != 'RUNNING' OR started_at < ?").run(stuckBefore()).changes;
+  audit({ actor: actor.id, action: 'OWNER_IMPORT_HISTORY_CLEARED', meta: { deleted } });
+  return { deleted };
+}

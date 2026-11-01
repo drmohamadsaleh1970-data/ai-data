@@ -294,6 +294,8 @@ export function createApp(options = {}) {
   r.post('/owner/hot/pool/:id/allocate', OWNER, ok((req) => hot.allocate({ actor: req.user, poolId: req.params.id, orgId: req.body.org_id })));
   // ai-home.world investor-data source (import only; this portal is standalone).
   r.get('/owner/source', OWNER, ok(() => source.sourceStatus()));
+  r.delete('/owner/source/jobs/:id', OWNER, ok((req) => owner.deleteImportJob({ actor: req.user, id: req.params.id })));
+  r.post('/owner/source/jobs/clear', OWNER, ok((req) => owner.clearImportHistory({ actor: req.user, confirm: req.body?.confirm })));
   r.post('/owner/source/preview', OWNER, ok(async (req) => {
     const { parsed, ...summary } = source.preview(await source.parseFile(req.body.file_base64, req.body.file_name));
     return { ...summary, sample: parsed.filter((p) => !p.errors.length).slice(0, 5).map((p) => p.record) };

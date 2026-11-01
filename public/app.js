@@ -1023,8 +1023,10 @@ async function ownerSource() {
         : '<p class="small muted">Set AIHOME_SOURCE_URL and AIHOME_SOURCE_TOKEN on the server to pull investor data from an ai-home.world endpoint (paged JSON, same column names). Until then, use file import.</p>'}
     </div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>Import history</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>${t('date')}</th><th>Mode</th><th>File</th><th class="num">Rows</th><th class="num">New investors</th><th class="num">New txns</th><th class="num">Updated</th><th class="num">Rejected</th><th>By</th></tr></thead>
-    <tbody>${s.jobs.map((j) => `<tr><td>${j.id}</td><td class="small">${fmtDT(j.started_at)}</td><td><span class="badge">${esc(j.mode)}</span></td><td class="small">${esc(j.file_name || '—')}</td><td class="num">${fmtNum(j.rows_read)}</td><td class="num">${fmtNum(j.investors_created)}</td><td class="num">${fmtNum(j.transactions_created)}</td><td class="num">${fmtNum(j.transactions_updated)}</td><td class="num">${j.rows_rejected ? `<span class="badge warn">${j.rows_rejected}</span>` : 0}</td><td class="small">${esc(j.started_by_email || 'scheduled')}</td></tr>`).join('') || '<tr><td colspan="10" class="empty">No imports yet.</td></tr>'}</tbody></table></div></div>`;
+  <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">Import history</h3><div class="spacer"></div>${s.jobs.length ? `<button class="btn sm" style="border-color:var(--bad);color:var(--bad)" data-act="import-history-clear" data-count="${s.jobs.length}">Clear import history</button>` : ''}</div>
+    <p class="small muted">Deleting history removes the log entries only; the investor records stay. To remove records, use Delete all investor data on Master Cold database.</p>
+    <div class="table-wrap"><table><thead><tr><th>#</th><th>${t('date')}</th><th>Mode</th><th>File</th><th class="num">Rows</th><th class="num">New investors</th><th class="num">New txns</th><th class="num">Updated</th><th class="num">Rejected</th><th>By</th><th></th></tr></thead>
+    <tbody>${s.jobs.map((j) => `<tr><td>${j.id}</td><td class="small">${fmtDT(j.started_at)}</td><td><span class="badge">${esc(j.mode)}</span></td><td class="small">${esc(j.file_name || '—')}</td><td class="num">${fmtNum(j.rows_read)}</td><td class="num">${fmtNum(j.investors_created)}</td><td class="num">${fmtNum(j.transactions_created)}</td><td class="num">${fmtNum(j.transactions_updated)}</td><td class="num">${j.rows_rejected ? `<span class="badge warn">${j.rows_rejected}</span>` : 0}</td><td class="small">${esc(j.started_by_email || 'scheduled')}</td><td>${j.status === 'RUNNING' ? '' : `<button class="btn sm ghost" data-act="import-job-delete" data-id="${j.id}" aria-label="Delete import ${j.id} from history">Delete</button>`}</td></tr>`).join('') || '<tr><td colspan="11" class="empty">No imports yet.</td></tr>'}</tbody></table></div></div>`;
 }
 
 function readUpload(id) {
@@ -1099,6 +1101,10 @@ const actions = {
     } catch (e) { toast(errMsg(e), true); }
   },
   'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); render(); },
+  'import-job-delete': async (el) => { if (confirm(`Delete import #${el.dataset.id} from the history? Investor records are kept.`)) { await api('DELETE', `/api/owner/source/jobs/${el.dataset.id}`); toast('Removed from history ✓'); render(); } },
+  'import-history-clear': (el) => confirmDelete({ title: 'Clear import history', phrase: 'CLEAR IMPORT HISTORY',
+    text: `Removes all ${el.dataset.count} entries from the import history. Investor records are kept.`,
+    run: (confirm) => POST('/api/owner/source/jobs/clear', { confirm }) }),
   'owner-delete-user-crm': (el) => confirmDelete({ title: 'Delete this user’s CRM data', phrase: 'DELETE CRM DATA',
     text: `Removes the ${el.dataset.count} lead(s) assigned to ${el.dataset.name}, with notes and follow-ups.`,
     run: (confirm) => POST(`/api/owner/orgs/${el.dataset.org}/crm/delete`, { user_id: Number(el.dataset.id), confirm }) }),
