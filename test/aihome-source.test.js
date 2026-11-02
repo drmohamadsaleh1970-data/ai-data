@@ -196,6 +196,10 @@ test('API sync filter: preview counts, saved filter, JVC alias, contact rule', a
   assert.equal(pv.skipped_no_contact, 1);
   assert.equal(pv.skipped_by_filter, 5);
   assert.equal(pv.sample[0].nationality, 'India');
+  // Dropdown labels work too, and nationality is an exact match ("Ind" is not India).
+  assert.equal((await o.post('/api/owner/source/sync/preview', { filter: { ...filter, areas: ['Jumeirah Village Circle (JVC)'] } })).data.would_import, 1);
+  assert.equal((await o.post('/api/owner/source/sync/preview', { filter: { ...filter, nationalities: ['Ind'] } })).data.would_import, 0);
+  assert.ok((await o.get('/api/owner/source')).data.suggestions.nationalities.includes('India'), 'values seen in the feed feed the dropdowns');
   // Phone required drops the email-only JVC buyer too.
   assert.equal((await o.post('/api/owner/source/sync/preview', { filter: { ...filter, contact: 'PHONE' } })).data.would_import, 0);
 
