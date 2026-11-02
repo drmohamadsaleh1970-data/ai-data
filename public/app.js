@@ -357,7 +357,7 @@ async function viewSignIn() {
   // Google opens once we know enough to set up the account: a returning user needs nothing.
   const ready = !!pendingActivation || returning || (!!role && !!profile);
   const inApp = inAppBrowser();
-  const inAppNote = inApp ? `<div class="banner warn" data-test="inapp-warning" style="flex-direction:column;gap:8px">
+  const inAppNote = inApp ? `<div class="banner warn" data-test="inapp-warning" style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
       <span>You opened this page inside ${esc(inApp)}. Google does not allow sign-in here.</span>
       <span style="font-weight:500">Tap the ⋮ or share menu and choose <b>Open in Chrome</b> / <b>Open in Safari</b>, or copy the link and paste it into your browser.</span>
       <button type="button" class="btn sm" data-act="copy-signin-link">Copy link</button></div>` : '';
@@ -562,15 +562,13 @@ async function viewOverview() {
   const newLeads = leads.filter((l) => l.stage === 'NEW');
   const cold = e.cold;
   const left = cold.quota?.remaining;
-  const [nextTitle, nextText, nextHref, nextLabel] = !cold.active
-    ? ['Switch on data access', 'Your account has no active plan yet. Pay for a plan and investor records become available the same day.', '#/billing', 'Go to billing']
-    : overdue.length
-      ? [`${plural(overdue.length, 'follow-up is', 'follow-ups are')} overdue`, 'Clients you promised to contact are waiting. Clear these first.', '#/crm?view=tasks', 'Open my day']
-      : newLeads.length
-        ? [`${plural(newLeads.length, 'new lead is', 'new leads are')} waiting for a first call`, 'Fast first contact wins most deals. Open each one, call, and log what happened.', '#/crm?stage=NEW', 'See new leads']
-        : can('cold.search') && left
-          ? ['Find investors to call', `You can still move ${fmtNum(left)} investor records into your CRM today. Searching is free.`, '#/investor-history', 'Search investors']
-          : ['Work your pipeline', 'Nothing urgent. Move your open leads forward, one stage at a time.', '#/crm?view=pipeline', 'Open pipeline'];
+  const [nk, nextHref, n] = !cold.active ? ['plan', '#/billing']
+    : overdue.length ? ['overdue', '#/crm?view=tasks', overdue.length]
+      : newLeads.length ? ['new', '#/crm?stage=NEW', newLeads.length]
+        : can('cold.search') && left ? ['find', '#/investor-history', left]
+          : ['pipe', '#/crm?view=pipeline'];
+  const fill = (k) => t(`ns_${nk}_${k}`).replace('{n}', fmtNum(n));
+  const [nextTitle, nextText, nextLabel] = [fill('t'), fill('d'), fill('b')];
   return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('overview')}</h1></div></div>
   <div class="card next-step"><div><div class="small muted">${t('next_step')}</div><h2>${esc(nextTitle)}</h2><p class="muted">${esc(nextText)}</p></div><a class="btn primary" href="${nextHref}">${esc(nextLabel)}</a></div>
   <div class="grid g4">

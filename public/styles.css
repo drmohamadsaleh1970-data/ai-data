@@ -178,7 +178,7 @@ tr.click { cursor: pointer; }
 tr.click:hover td { background: var(--muted-bg); }
 .num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .empty { padding: 36px; text-align: center; color: var(--ink-soft); }
-.banner { border-radius: 10px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; font-weight: 500; font-size: 14px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); }
+.banner { border-radius: 10px; padding: 12px 14px; display: block; font-weight: 500; font-size: 14px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); }
 .banner b { font-weight: 700; }
 .banner.cold { background: var(--cold-bg); color: var(--cold); }
 .banner.hot { background: var(--hot-bg); color: var(--hot); }
