@@ -49,11 +49,28 @@ test('owner removes an account from the portal: hidden and login freed, data kep
   assert.equal((await o.post(`/api/owner/orgs/${org.id}/remove`, { confirm: 'REMOVE ACCOUNT' })).data.error, 'ALREADY_REMOVED');
 });
 
-test('accounts with a live plan cannot be removed', async () => {
+test('accounts with a live plan can be removed too; plan and payments stay in the data', async () => {
   const o = client(srv.base);
   await o.login('owner');
   await o.mfa();
-  const live = db.prepare("SELECT org_id FROM subscription WHERE status = 'ACTIVE' LIMIT 1").get();
+  const live = db.prepare("SELECT s.id, s.org_id FROM subscription s JOIN organization o ON o.id = s.org_id WHERE s.status = 'ACTIVE' AND o.archived_at IS NULL LIMIT 1").get();
   assert.ok(live, 'fixtures include an active subscription');
-  assert.equal((await o.post(`/api/owner/orgs/${live.org_id}/remove`, { confirm: 'REMOVE ACCOUNT' })).data.error, 'HAS_PLAN');
+  const r = await o.post(`/api/owner/orgs/${live.org_id}/remove`, { confirm: 'REMOVE ACCOUNT' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(db.prepare('SELECT status FROM subscription WHERE id = ?').get(live.id).status, 'ACTIVE', 'subscription row untouched');
+});
+
+test('remove all customer accounts keeps the owner accounts', async () => {
+  const o = client(srv.base);
+  await o.login('owner');
+  await o.mfa();
+  const owners = db.prepare('SELECT o.id FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE u.platform_role IS NOT NULL').all().map((x) => x.id);
+  assert.equal((await o.post('/api/owner/orgs/remove-all', { confirm: 'REMOVE ACCOUNT' })).data.error, 'CONFIRMATION_REQUIRED');
+  const r = await o.post('/api/owner/orgs/remove-all', { confirm: 'REMOVE ALL ACCOUNTS' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.ok(r.data.accounts_removed >= 1);
+  const left = db.prepare('SELECT o.id, u.platform_role FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.archived_at IS NULL').all();
+  assert.ok(left.every((x) => x.platform_role), 'only owner accounts remain in the portal');
+  for (const id of owners) assert.equal(db.prepare('SELECT archived_at FROM organization WHERE id = ?').get(id).archived_at, null);
+  assert.ok(db.prepare('SELECT COUNT(*) AS n FROM organization').get().n > left.length, 'removed accounts still in the data');
 });

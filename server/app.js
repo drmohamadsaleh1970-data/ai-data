@@ -333,6 +333,7 @@ export function createApp(options = {}) {
   r.get('/owner/orgs/:id/crm/leads/:leadId', OWNER, ok((req) => dashboard.ownerLeadDetail({ actor: req.user, orgId: req.params.id, leadId: req.params.leadId })));
   r.patch('/owner/orgs/:id/crm/leads/:leadId', OWNER, ok((req) => dashboard.ownerUpdateLead({ actor: req.user, orgId: req.params.id, leadId: req.params.leadId, stage: req.body?.stage, assigned_user_id: req.body?.assigned_user_id })));
   r.patch('/owner/orgs/:orgId/members/:userId', OWNER, ok((req) => owner.setUserCap({ actor: req.user, orgId: req.params.orgId, userId: req.params.userId, value: req.body?.daily_cap })));
+  r.post('/owner/orgs/remove-all', OWNER, requireRecentMfa, ok((req) => owner.removeAllCustomerOrgs({ actor: req.user, confirm: req.body?.confirm })));
   r.post('/owner/orgs/:id/remove', OWNER, requireRecentMfa, ok((req) => owner.removeOrgFromPortal({ actor: req.user, orgId: req.params.id, confirm: req.body?.confirm })));
   r.post('/owner/orgs/:orgId/crm/delete', OWNER, requireRecentMfa, ok((req) => owner.deleteCrmData({ actor: req.user, orgId: req.params.orgId, userId: req.body?.user_id || null, confirm: req.body?.confirm })));
   r.post('/owner/crm/delete-all', OWNER, requireRecentMfa, ok((req) => owner.deleteAllCrmData({ actor: req.user, confirm: req.body?.confirm })));
