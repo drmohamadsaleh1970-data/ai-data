@@ -1,5 +1,6 @@
 import { translator, LANGS, RTL } from './i18n.js';
 import { GUIDE_ROLES, GUIDE_FLOW, GUIDE_ACCESS } from './guide-content.js';
+import { NATIONALITIES, DUBAI_AREAS, PROPERTY_TYPES, PRICE_STEPS_AED } from './filter-lists.js';
 
 // ---------------------------------------------------------------------------------
 // Core: state, API, formatting
@@ -1594,30 +1595,53 @@ async function ownerSource() {
     <tbody>${s.jobs.map((j) => `<tr><td>${j.id}</td><td class="small">${fmtDT(j.started_at)}</td><td><span class="badge">${esc(j.mode)}</span></td><td class="small">${esc(j.file_name || '—')}</td><td class="num">${fmtNum(j.rows_read)}</td><td class="num">${fmtNum(j.investors_created)}</td><td class="num">${fmtNum(j.transactions_created)}</td><td class="num">${fmtNum(j.transactions_updated)}</td><td class="num">${j.rows_rejected ? `<span class="badge warn">${j.rows_rejected}</span>` : 0}</td><td class="num small" title="${esc(j.filter_text || '')}">${(j.rows_skipped_no_contact || j.rows_skipped_filter) ? `${fmtNum(j.rows_skipped_no_contact || 0)} no contact<br>${fmtNum(j.rows_skipped_filter || 0)} by filter` : '—'}</td><td class="small">${esc(j.started_by_email || 'scheduled')}</td><td>${j.status === 'RUNNING' ? '' : `<button class="btn sm ghost" data-act="import-job-delete" data-id="${j.id}" aria-label="Delete import ${j.id} from history">Delete</button>`}</td></tr>`).join('') || '<tr><td colspan="12" class="empty">No imports yet.</td></tr>'}</tbody></table></div></div>`;
 }
 
-// API sync filter. Contact is always required (phone or email at minimum); everything
-// else is optional and narrows which ai-home.world rows are imported. Saved on each sync.
+// API sync filter. Every filter is a dropdown. Contact is always required (phone or email
+// at minimum); everything else is optional and narrows which ai-home.world rows are
+// imported. Nationality, area and property type are searchable multi-select lists built
+// from the full lists plus every value seen in the data. Saved on each sync.
+const uniqSorted = (...lists) => {
+  const m = new Map(); // first spelling wins, so the clean list names beat raw data casing
+  for (const v of lists.flat().filter(Boolean)) if (!m.has(String(v).toLowerCase())) m.set(String(v).toLowerCase(), String(v));
+  return [...m.values()].sort((x, y) => x.localeCompare(y));
+};
+const fmtShortAED = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(2)}M` : `${Math.round(n / 1e3)}K`);
+
+function multiSelect(name, label, options, selected, allText) {
+  const sel = new Set((selected || []).map((v) => String(v).toLowerCase()));
+  // Keep saved choices visible even if they are not in today's list.
+  const all = uniqSorted(options, (selected || []).filter((v) => !options.some((o) => o.toLowerCase() === String(v).toLowerCase())));
+  const summary = (n) => (n ? `${n} selected` : allText);
+  return `<div class="field msel-wrap"><span>${esc(label)}</span><details class="msel" data-all="${esc(allText)}">
+    <summary class="msel-sum">${esc(summary(all.filter((o) => sel.has(o.toLowerCase())).length))}</summary>
+    <div class="msel-pop"><input type="search" class="msel-search" placeholder="Search ${esc(label.toLowerCase())}…" aria-label="Search ${esc(label)}">
+      <div class="msel-tools"><button type="button" class="btn sm ghost" data-msel="none">Clear</button><span class="small muted">${fmtNum(all.length)} options</span></div>
+      <div class="msel-list">${all.map((o) => `<label class="msel-opt"><input type="checkbox" name="${name}" value="${esc(o)}" ${sel.has(o.toLowerCase()) ? 'checked' : ''}><span>${esc(o)}</span></label>`).join('')}</div>
+    </div></details></div>`;
+}
+
 function syncFilterForm(s) {
   const f = s.sync_filter || {};
   const sug = s.suggestions || {};
-  const dl = (id, vals) => `<datalist id="${id}">${(vals || []).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>`;
-  const opt = (v, label, cur) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${label}</option>`;
-  const join = (a) => esc((a || []).join(', '));
+  const opt = (v, label, cur) => `<option value="${v}" ${String(cur ?? '') === String(v) ? 'selected' : ''}>${label}</option>`;
+  const prices = (cur, anyLabel) => opt('', anyLabel, cur ?? '') + PRICE_STEPS_AED.map((p) => opt(p, `AED ${fmtShortAED(p)}`, cur)).join('');
+  const thisYear = new Date().getFullYear();
+  const years = Array.from({ length: thisYear - 2001 }, (_, i) => thisYear - i);
+  const yearSel = (name, cur, anyLabel) => `<select name="${name}">${opt('', anyLabel, cur || '')}${years.map((y) => opt(y, y, cur)).join('')}</select>`;
   return `<form id="sync-filter" class="grid" style="gap:10px;border-top:1px solid var(--line);padding-top:12px" onsubmit="return false">
     <div class="row" style="justify-content:space-between"><b>What to import</b><button type="button" class="btn sm ghost" data-act="sync-filter-reset">Clear filters</button></div>
     <div class="grid g2" style="gap:10px">
       <label class="field">Contact details<select name="contact">${opt('ANY', 'Phone or email (minimum)', f.contact)}${opt('PHONE', 'Phone required', f.contact)}${opt('EMAIL', 'Email required', f.contact)}${opt('BOTH', 'Phone and email', f.contact)}</select></label>
       <label class="field">Client<select name="client_role">${opt('', 'Buyers and sellers', f.client_role || '')}${opt('BUYER', 'Buyers only', f.client_role)}${opt('SELLER', 'Sellers only', f.client_role)}</select></label>
-      <label class="field">Nationality<input name="nationalities" list="dl-nat" placeholder="e.g. India, Pakistan" value="${join(f.nationalities)}"></label>
-      <label class="field">Area or project<input name="areas" list="dl-area" placeholder="e.g. JVC, Dubai Marina" value="${join(f.areas)}"></label>
-      <label class="field">Property type<input name="property_types" list="dl-type" placeholder="e.g. Villa, Unit" value="${join(f.property_types)}"></label>
-      <div class="row" style="gap:8px;align-items:end">
-        <label class="field" style="flex:1">Min price (AED)<input name="min_price_aed" type="number" min="0" step="100000" placeholder="3000000" value="${f.min_price_aed ?? ''}"></label>
-        <label class="field" style="flex:1">Max price (AED)<input name="max_price_aed" type="number" min="0" step="100000" placeholder="any" value="${f.max_price_aed ?? ''}"></label></div>
-      <label class="field">Registered from<input name="date_from" type="date" value="${esc(f.date_from || '')}"></label>
-      <label class="field">Registered to<input name="date_to" type="date" value="${esc(f.date_to || '')}"></label>
+      ${multiSelect('nationalities', 'Nationality', uniqSorted(NATIONALITIES, sug.nationalities), f.nationalities, 'All nationalities')}
+      ${multiSelect('areas', 'Area', uniqSorted(DUBAI_AREAS, sug.areas), f.areas, 'All areas')}
+      ${multiSelect('property_types', 'Property type', uniqSorted(PROPERTY_TYPES, sug.property_types), f.property_types, 'All property types')}
+      <div class="row" style="gap:8px;align-items:end;flex-wrap:nowrap">
+        <label class="field" style="flex:1">Min price<select name="min_price_aed">${prices(f.min_price_aed, 'No minimum')}</select></label>
+        <label class="field" style="flex:1">Max price<select name="max_price_aed">${prices(f.max_price_aed, 'No maximum')}</select></label></div>
+      <label class="field">Registered from${yearSel('year_from', f.date_from?.slice(0, 4), 'Any year')}</label>
+      <label class="field">Registered to${yearSel('year_to', f.date_to?.slice(0, 4), 'Any year')}</label>
     </div>
-    ${dl('dl-nat', sug.nationalities)}${dl('dl-area', ['JVC', 'Dubai Marina', 'Downtown', 'Business Bay', 'Palm Jumeirah', ...(sug.areas || [])])}${dl('dl-type', sug.property_types)}
-    <p class="small muted" style="margin:0">Records with no phone and no email are never imported. Separate several values with commas. Area also matches the project name; JVC, Marina and Downtown are matched to their official area names. The filter is saved and also used by scheduled syncs.</p>
+    <p class="small muted" style="margin:0">Records with no phone and no email are never imported. Area also matches the project name; JVC, JVT, JLT, Marina, Downtown and Dubai Hills are matched to their official area names. The lists grow with every value seen from ai-home.world. The filter is saved and also used by scheduled syncs.</p>
     <div class="row"><button type="button" class="btn" data-act="src-sync-preview">Preview count</button><button type="button" class="btn primary" data-act="src-sync">Sync now</button></div>
     <div id="sync-out"></div></form>`;
 }
@@ -1625,10 +1649,30 @@ function syncFilterForm(s) {
 function readSyncFilter() {
   const form = document.getElementById('sync-filter');
   if (!form) return null;
-  const d = Object.fromEntries(new FormData(form).entries());
-  const csv = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
-  return { ...d, nationalities: csv(d.nationalities), areas: csv(d.areas), property_types: csv(d.property_types) };
+  const fd = new FormData(form);
+  const yf = fd.get('year_from');
+  const yt = fd.get('year_to');
+  return {
+    contact: fd.get('contact'), client_role: fd.get('client_role'),
+    nationalities: fd.getAll('nationalities'), areas: fd.getAll('areas'), property_types: fd.getAll('property_types'),
+    min_price_aed: fd.get('min_price_aed'), max_price_aed: fd.get('max_price_aed'),
+    date_from: yf ? `${yf}-01-01` : null, date_to: yt ? `${yt}-12-31` : null,
+  };
 }
+
+// Multi-select behaviour: live count in the summary, search, clear, one open at a time.
+const mselSync = (d) => { const n = d.querySelectorAll('input[type=checkbox]:checked').length; d.querySelector('.msel-sum').textContent = n ? `${n} selected` : d.dataset.all; };
+document.addEventListener('change', (e) => { const d = e.target.closest?.('details.msel'); if (d && e.target.type === 'checkbox') mselSync(d); });
+document.addEventListener('input', (e) => {
+  if (!e.target.classList?.contains('msel-search')) return;
+  const q = e.target.value.trim().toLowerCase();
+  e.target.closest('details.msel').querySelectorAll('.msel-opt').forEach((l) => { l.hidden = q && !l.textContent.toLowerCase().includes(q); });
+});
+document.addEventListener('click', (e) => {
+  const clr = e.target.closest?.('[data-msel="none"]');
+  if (clr) { const d = clr.closest('details.msel'); d.querySelectorAll('input[type=checkbox]').forEach((c) => { c.checked = false; }); mselSync(d); return; }
+  document.querySelectorAll('details.msel[open]').forEach((d) => { if (!d.contains(e.target)) d.open = false; });
+});
 
 const SKIP_LABEL = { role: 'buyer/seller', nationality: 'nationality', area: 'area', property_type: 'property type', price: 'price', date: 'date' };
 const skipText = (r) => Object.entries(r.skipped_reasons || {}).map(([k, v]) => `${SKIP_LABEL[k] || k}: ${fmtNum(v)}`).join(' · ');
@@ -1866,8 +1910,10 @@ const actions = {
   },
   'sync-filter-reset': () => {
     const form = document.getElementById('sync-filter');
-    form.querySelectorAll('input').forEach((i) => { i.value = ''; });
+    form.querySelectorAll('input[type=checkbox]').forEach((i) => { i.checked = false; });
+    form.querySelectorAll('input[type=search]').forEach((i) => { i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); });
     form.querySelectorAll('select').forEach((x) => { x.selectedIndex = 0; });
+    form.querySelectorAll('details.msel').forEach(mselSync);
     document.getElementById('sync-out').innerHTML = '';
   },
   'crm-import': () => {

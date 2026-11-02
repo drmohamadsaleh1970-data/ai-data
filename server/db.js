@@ -618,7 +618,8 @@ const ADDED_COLUMNS = [
   ['hot_lead_pool', 'utm_json', 'TEXT'],               // utm_source/medium/campaign/content/term
   ['organization', 'archived_at', 'TEXT'],            // removed from the portal by the owner; data kept
   ['organization', 'archived_by', 'INTEGER'],
-  ['data_provenance', 'sync_filter_json', 'TEXT'],     // owner's saved API sync filter (ai-home.world)
+  ['data_provenance', 'sync_filter_json', 'TEXT'],
+  ['data_provenance', 'sync_values_json', 'TEXT'],     // nationalities / areas / types seen in the ai-home.world feed     // owner's saved API sync filter (ai-home.world)
   ['source_import_job', 'rows_skipped_no_contact', 'INTEGER'], // API rows dropped: no phone and no email
   ['source_import_job', 'rows_skipped_filter', 'INTEGER'],     // API rows left out by the owner's filter
   ['source_import_job', 'filter_text', 'TEXT'],                // human-readable filter used for this run

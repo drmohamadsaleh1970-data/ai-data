@@ -161,13 +161,19 @@ export async function parseFile(base64, fileName = '') {
 // a record with neither a phone nor an email can never be worked, so it is never imported.
 // Area terms also match the project name, and common nicknames map to DLD area names.
 const AREA_ALIASES = {
-  jvc: ['jumeirah village circle', 'al barsha south fourth'],
+  jvc: ['jumeirah village circle', 'al barsha south fourth', 'al barshaa south fourth'],
+  'jumeirah village circle (jvc)': ['jumeirah village circle', 'al barsha south fourth', 'al barshaa south fourth'],
+  jvt: ['jumeirah village triangle', 'al barsha south fifth', 'al barshaa south fifth'],
+  'jumeirah village triangle (jvt)': ['jumeirah village triangle', 'al barsha south fifth', 'al barshaa south fifth'],
+  jlt: ['jumeirah lake towers', 'al thanyah fifth', 'al thanayah fifth'],
+  'jumeirah lake towers (jlt)': ['jumeirah lake towers', 'al thanyah fifth', 'al thanayah fifth'],
   'dubai marina': ['dubai marina', 'marsa dubai'],
   marina: ['dubai marina', 'marsa dubai'],
   downtown: ['downtown', 'burj khalifa'],
   'downtown dubai': ['downtown', 'burj khalifa'],
+  'dubai hills estate': ['dubai hills', 'hadaeq sheikh mohammed bin rashid'],
   'business bay': ['business bay'],
-  palm: ['palm jumeirah', 'palm jumeira'],
+  palm: ['palm jumeirah', 'palm jumeira', 'palm deira'],
   'palm jumeirah': ['palm jumeirah', 'palm jumeira'],
 };
 const CONTACT_RULES = ['ANY', 'PHONE', 'EMAIL', 'BOTH'];
@@ -202,7 +208,8 @@ export function hasContact(r, rule = 'ANY') {
 export function filterReason(r, f) {
   const has = (value, terms) => { const v = String(value || '').toLowerCase(); return terms.some((t) => v.includes(t)); };
   if (f.client_role && r.client_role !== f.client_role) return 'role';
-  if (f.nationalities.length && !has(r.nationality, f.nationalities)) return 'nationality';
+  // Nationality is matched exactly (case-insensitive): "Niger" must not catch "Nigeria".
+  if (f.nationalities.length && !f.nationalities.includes(String(r.nationality || '').trim().toLowerCase())) return 'nationality';
   if (f.areas.length) {
     const terms = f.areas.flatMap((a) => AREA_ALIASES[a] || [a]);
     if (!has(r.area, terms) && !has(r.project, terms)) return 'area';
@@ -365,10 +372,29 @@ function saveSyncFilter(f, actor) {
 
 // API sync. Rows without a phone or email are never imported. `filter` (optional, else the
 // saved one) narrows what is kept; `dryRun` fetches and counts without writing anything.
+// Every nationality, area and property type seen in the feed is remembered, so the filter
+// dropdowns list exactly the spellings ai-home.world uses (even before anything is imported).
+function rememberFeedValues(parsed) {
+  const seen = { nationalities: new Set(), areas: new Set(), property_types: new Set() };
+  for (const { record: r } of parsed) {
+    if (r.nationality) seen.nationalities.add(r.nationality);
+    if (r.area && r.area !== 'Unknown') seen.areas.add(r.area);
+    if (r.property_type && r.property_type !== 'Unknown') seen.property_types.add(r.property_type);
+  }
+  tx((conn) => {
+    const prov = provenanceId(conn);
+    let old = {};
+    try { old = JSON.parse(conn.prepare('SELECT sync_values_json FROM data_provenance WHERE id = ?').get(prov)?.sync_values_json || '{}'); } catch { /* start over */ }
+    const merged = Object.fromEntries(Object.entries(seen).map(([k, set]) => [k, [...new Set([...(old[k] || []), ...set])].sort().slice(0, 1000)]));
+    conn.prepare('UPDATE data_provenance SET sync_values_json = ? WHERE id = ?').run(JSON.stringify(merged), prov);
+  });
+}
+
 export async function syncFromApi({ actor, filter, save = false, dryRun = false } = {}) {
   const f = filter ? normalizeFilter(filter) : savedSyncFilter();
   if (save && !dryRun) saveSyncFilter(f, actor);
   const rows = await fetchApiRows();
+  try { rememberFeedValues(preview(rows).parsed); } catch (err) { console.error('[aihome-sync] could not remember feed values', err.message); }
   if (dryRun) {
     const pv = preview(rows);
     const out = { rows: rows.length, rejected: pv.rejected, skipped_no_contact: 0, skipped_by_filter: 0, skipped_reasons: {}, would_import: 0, filter: describeFilter(f), sample: [] };
@@ -388,6 +414,21 @@ export async function syncFromApi({ actor, filter, save = false, dryRun = false 
   return importRows({ rows, actor, mode: 'API', filter: f, requireContact: true });
 }
 
+// Values for the sync filter dropdowns: everything already imported plus everything seen
+// in the feed. The page adds the full country list and the main Dubai areas on top.
+function feedSuggestions(db, prov) {
+  if (!prov) return { nationalities: [], areas: [], property_types: [] };
+  let feed = {};
+  try { feed = JSON.parse(prov.sync_values_json || '{}'); } catch { /* ignore */ }
+  const col = (sql) => db.prepare(sql).all(prov.id).map((x) => x.v);
+  const merge = (a, b) => [...new Set([...a, ...(b || [])])].sort((x, y) => x.localeCompare(y));
+  return {
+    nationalities: merge(col('SELECT DISTINCT nationality AS v FROM investor_contact WHERE provenance_id = ? AND nationality IS NOT NULL'), feed.nationalities),
+    areas: merge(col("SELECT DISTINCT area AS v FROM investor_transaction WHERE provenance_id = ? AND area <> 'Unknown'"), feed.areas),
+    property_types: merge(col("SELECT DISTINCT property_type AS v FROM investor_transaction WHERE provenance_id = ? AND property_type <> 'Unknown'"), feed.property_types),
+  };
+}
+
 export function sourceStatus() {
   const db = getDb();
   const prov = db.prepare('SELECT * FROM data_provenance WHERE source_name = ?').get(SOURCE_NAME);
@@ -397,11 +438,7 @@ export function sourceStatus() {
     api_url_host: config.aihomeSource.url ? new URL(config.aihomeSource.url).host : null,
     scheduled_sync_minutes: config.aihomeSource.syncMinutes || null,
     sync_filter: savedSyncFilter(),
-    suggestions: prov ? {
-      nationalities: db.prepare('SELECT nationality AS v FROM investor_contact WHERE provenance_id = ? AND nationality IS NOT NULL GROUP BY nationality ORDER BY COUNT(*) DESC LIMIT 60').all(prov.id).map((x) => x.v),
-      areas: db.prepare("SELECT area AS v FROM investor_transaction WHERE provenance_id = ? AND area <> 'Unknown' GROUP BY area ORDER BY COUNT(*) DESC LIMIT 80").all(prov.id).map((x) => x.v),
-      property_types: db.prepare("SELECT property_type AS v FROM investor_transaction WHERE provenance_id = ? AND property_type <> 'Unknown' GROUP BY property_type ORDER BY COUNT(*) DESC LIMIT 30").all(prov.id).map((x) => x.v),
-    } : { nationalities: [], areas: [], property_types: [] },
+    suggestions: feedSuggestions(db, prov),
     rights_approved: !!prov?.allows_subscriber_transfer,
     totals: prov
       ? db.prepare(`SELECT COUNT(*) AS investors, SUM(CASE WHEN rights_status='APPROVED' THEN 1 ELSE 0 END) AS approved, SUM(CASE WHEN identity_confidence='AMBIGUOUS' THEN 1 ELSE 0 END) AS ambiguous,
