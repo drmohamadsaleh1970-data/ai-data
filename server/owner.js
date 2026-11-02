@@ -76,7 +76,7 @@ export function approvals() {
 
 export function dashboard() {
   const db = getDb();
-  const orgs = db.prepare('SELECT o.id, o.name, o.kind, o.created_at, u.email AS owner_email, (SELECT COUNT(*) FROM membership m WHERE m.org_id = o.id AND m.status=\'ACTIVE\') AS members FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.archived_at IS NULL ORDER BY o.id').all();
+  const orgs = db.prepare('SELECT o.id, o.name, o.kind, o.created_at, u.email AS owner_email, u.platform_role AS owner_platform_role, (SELECT COUNT(*) FROM membership m WHERE m.org_id = o.id AND m.status=\'ACTIVE\') AS members FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.archived_at IS NULL ORDER BY o.id').all();
   const withSub = orgs.map((o) => {
     const s = activeSubscription(o.id);
     const latest = db.prepare('SELECT status, plan_code, provider, current_period_end FROM subscription WHERE org_id = ? ORDER BY id DESC LIMIT 1').get(o.id);
@@ -269,31 +269,43 @@ export function clearImportHistory({ actor, confirm }) {
 // --- Owner: remove an account from the portal ------------------------------------------
 // The account disappears from every portal list and its people lose access to it, so the
 // next sign-in with that Google login starts fresh (a new account). Nothing is deleted:
-// the user, organization, leads, payments and audit trail stay in the database.
-// Accounts with money involved (live plan, confirmed payment awaiting activation, or a
-// payment waiting for confirmation) cannot be removed until that is settled.
+// the user, organization, subscription, payments, leads and audit trail stay in the
+// database. Unused activation codes are revoked so a removed account cannot be activated.
+// The platform owners' own accounts (owner CRM) are never removed.
+function archiveOrg(conn, org, actor, ts) {
+  conn.prepare('UPDATE organization SET archived_at = ?, archived_by = ? WHERE id = ?').run(ts, actor.id, org.id);
+  const members = conn.prepare("UPDATE membership SET status = 'REMOVED' WHERE org_id = ? AND status = 'ACTIVE'").run(org.id).changes;
+  conn.prepare('UPDATE session SET active_org_id = NULL WHERE active_org_id = ?').run(org.id);
+  conn.prepare('UPDATE activation_magic_link SET revoked_at = ? WHERE used_at IS NULL AND revoked_at IS NULL AND subscription_id IN (SELECT id FROM subscription WHERE org_id = ?)').run(ts, org.id);
+  const plan = conn.prepare("SELECT status FROM subscription WHERE org_id = ? ORDER BY id DESC LIMIT 1").get(org.id)?.status ?? null;
+  conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target, meta_json) VALUES (?,?,?,?,?,?)')
+    .run(ts, actor.id, org.id, 'OWNER_ACCOUNT_REMOVED_FROM_PORTAL', `org:${org.id}`, JSON.stringify({ name: org.name, owner_email: org.email, members, plan_status_kept: plan }));
+  return members;
+}
+
 export function removeOrgFromPortal({ actor, orgId, confirm }) {
   confirmed(confirm, 'REMOVE ACCOUNT');
   const db = getDb();
   const org = db.prepare('SELECT o.id, o.name, o.archived_at, u.email, u.platform_role FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.id = ?').get(Number(orgId));
   if (!org) throw new HttpError(404, 'NOT_FOUND');
   if (org.archived_at) throw new HttpError(409, 'ALREADY_REMOVED');
-  if (org.platform_role) throw new HttpError(409, 'OWNER_ACCOUNT', 'The AI-DATA owner CRM cannot be removed.');
-  const live = db.prepare("SELECT status FROM subscription WHERE org_id = ? AND status IN ('ACTIVE','PAST_DUE','AWAITING_ACTIVATION') ORDER BY id DESC LIMIT 1").get(org.id);
-  if (live) throw new HttpError(409, 'HAS_PLAN', live.status === 'AWAITING_ACTIVATION'
-    ? 'This account has a confirmed payment waiting for activation. Remove the duplicate account instead, or terminate the plan first.'
-    : 'This account has a live plan. Terminate the plan first.');
-  if (db.prepare("SELECT 1 FROM cash_payment_request WHERE org_id = ? AND status = 'PENDING_PAYMENT'").get(org.id)) {
-    throw new HttpError(409, 'HAS_PENDING_PAYMENT', 'This account has a payment waiting for confirmation. Confirm or reject it first.');
-  }
+  if (org.platform_role) throw new HttpError(409, 'OWNER_ACCOUNT', 'The AI-DATA owner accounts cannot be removed.');
+  return tx((conn) => {
+    const members = archiveOrg(conn, org, actor, iso());
+    return { id: org.id, name: org.name, members_removed: members };
+  });
+}
+
+// Every customer account at once (e.g. after testing). Owner accounts stay.
+export function removeAllCustomerOrgs({ actor, confirm }) {
+  confirmed(confirm, 'REMOVE ALL ACCOUNTS');
+  const orgs = getDb().prepare(`SELECT o.id, o.name, u.email FROM organization o JOIN platform_user u ON u.id = o.owner_user_id
+    WHERE o.archived_at IS NULL AND u.platform_role IS NULL ORDER BY o.id`).all();
   return tx((conn) => {
     const ts = iso();
-    conn.prepare('UPDATE organization SET archived_at = ?, archived_by = ? WHERE id = ?').run(ts, actor.id, org.id);
-    const members = conn.prepare("UPDATE membership SET status = 'REMOVED' WHERE org_id = ? AND status = 'ACTIVE'").run(org.id).changes;
-    conn.prepare('UPDATE session SET active_org_id = NULL WHERE active_org_id = ?').run(org.id);
-    conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target, meta_json) VALUES (?,?,?,?,?,?)')
-      .run(ts, actor.id, org.id, 'OWNER_ACCOUNT_REMOVED_FROM_PORTAL', `org:${org.id}`, JSON.stringify({ name: org.name, owner_email: org.email, members }));
-    return { id: org.id, name: org.name, members_removed: members };
+    let members = 0;
+    for (const org of orgs) members += archiveOrg(conn, org, actor, ts);
+    return { accounts_removed: orgs.length, members_removed: members };
   });
 }
 
