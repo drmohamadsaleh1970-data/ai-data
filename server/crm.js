@@ -472,12 +472,12 @@ export function searchAgencies(q) {
   const term = String(q || '').trim().toLowerCase();
   if (term.length < 2) return [];
   return getDb().prepare(`SELECT o.id, o.name FROM organization o JOIN platform_user u ON u.id = o.owner_user_id
-    WHERE o.kind = 'AGENCY' AND u.platform_role IS NULL AND lower(o.name) LIKE ? ORDER BY o.name LIMIT 8`).all(`%${term}%`);
+    WHERE o.kind = 'AGENCY' AND u.platform_role IS NULL AND o.archived_at IS NULL AND lower(o.name) LIKE ? ORDER BY o.name LIMIT 8`).all(`%${term}%`);
 }
 
 export function agencyById(id) {
   const org = getDb().prepare(`SELECT o.id, o.name FROM organization o JOIN platform_user u ON u.id = o.owner_user_id
-    WHERE o.id = ? AND o.kind = 'AGENCY' AND u.platform_role IS NULL`).get(Number(id));
+    WHERE o.id = ? AND o.kind = 'AGENCY' AND u.platform_role IS NULL AND o.archived_at IS NULL`).get(Number(id));
   if (!org) throw new HttpError(400, 'AGENCY_NOT_FOUND', 'Choose your agency from the list.');
   return org;
 }

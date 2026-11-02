@@ -1457,7 +1457,8 @@ async function viewOwner([sub = 'dashboard', ...rest], query = {}) {
     <div class="card"><div class="stat"><span class="l">Overdue / suspended</span><span class="v" style="color:var(--bad)">${d.overdue.length}</span></div></div>
     <div class="card"><div class="stat"><span class="l">Investor records</span><span class="v">${fmtNum(d.data.investors)}</span></div><p class="small muted">${fmtNum(d.data.transactions)} transactions · ${fmtNum(d.data.approved)} approved · ${fmtNum(d.data.pending)} pending review · ${fmtNum(d.data.suppressed)} suppressed</p></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>Organizations</h3><div class="table-wrap"><table><thead><tr><th>Organization</th><th>Owner</th><th class="num">Members</th><th>${t('plan')}</th><th>${t('status')}</th><th>${t('renews')}</th></tr></thead><tbody>${d.organizations.map((o) => `<tr class="click" data-href="#/owner/org/${o.id}"><td><a href="#/owner/org/${o.id}"><b>${esc(o.name)}</b></a> <span class="badge">${esc(o.kind)}</span></td><td class="small">${esc(o.owner_email)}</td><td class="num">${o.members}</td><td>${esc(human(o.active_plan || '—'))}</td><td><span class="badge ${o.active_plan ? 'ok' : 'warn'}">${esc(human(o.status))}</span> <span class="small muted">${esc(human(o.provider || ''))}</span></td><td>${fmtDate(o.renews_or_ends)}</td></tr>`).join('')}</tbody></table></div></div>
+  <div class="card" style="margin-top:16px"><h3>Organizations</h3><div class="table-wrap"><table><thead><tr><th>Organization</th><th>Owner</th><th class="num">Members</th><th>${t('plan')}</th><th>${t('status')}</th><th>${t('renews')}</th><th></th></tr></thead><tbody>${d.organizations.map((o) => `<tr class="click" data-href="#/owner/org/${o.id}"><td><a href="#/owner/org/${o.id}"><b>${esc(o.name)}</b></a> <span class="badge">${esc(o.kind)}</span></td><td class="small">${esc(o.owner_email)}</td><td class="num">${o.members}</td><td>${esc(human(o.active_plan || '—'))}</td><td><span class="badge ${o.active_plan ? 'ok' : 'warn'}">${esc(human(o.status))}</span> <span class="small muted">${esc(human(o.provider || ''))}</span></td><td>${fmtDate(o.renews_or_ends)}</td><td>${['ACTIVE','PAST_DUE','AWAITING_ACTIVATION'].includes(o.status) || o.name === 'AI-DATA owner CRM' ? '' : `<button class="btn sm ghost" style="color:var(--bad)" data-act="owner-remove-org" data-org="${o.id}" data-name="${esc(o.name)}" data-email="${esc(o.owner_email)}">Remove from portal</button>`}</td></tr>`).join('')}</tbody></table></div>
+    ${d.removed_organizations?.length ? `<details style="margin-top:12px"><summary class="small muted">Removed from portal (${d.removed_organizations.length}) — kept in the data, hidden here</summary><div class="table-wrap"><table><tbody>${d.removed_organizations.map((o) => `<tr><td><b>${esc(o.name)}</b> <span class="badge">${esc(o.kind)}</span></td><td class="small">${esc(o.owner_name)} · ${esc(o.owner_email)}</td><td class="small muted">removed ${fmtDT(o.archived_at)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}</div>
   <p class="small muted" style="margin-top:6px">Open an organization to set each user's daily limit or delete its CRM data.</p>
   ${isOwner() ? dangerZone([{ act: 'owner-delete-all-crm', title: 'Delete all customers’ CRM data', text: 'Removes every lead, contact, note and follow-up from every customer account (your own owner CRM is kept). Payments, invoices and the audit log are kept.' }]) : ''}
   <div class="card" style="margin-top:16px"><h3>Cold usage by day</h3><div class="table-wrap"><table><tbody>${d.cold_usage_today.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.local_day)}</td><td class="num">${u.committed_used} / ${u.plan_limit}</td></tr>`).join('') || '<tr><td class="empty">—</td></tr>'}</tbody></table></div></div>`;
@@ -1511,8 +1512,8 @@ function dangerZone(items) {
 }
 
 // Typed confirmation for deletions: the exact phrase must be typed, then MFA.
-function confirmDelete({ title, text, phrase, run }) {
-  openModal(`<h2 style="color:var(--bad)">${esc(title)}</h2><p>${esc(text)}</p><p class="small"><b>This cannot be undone.</b> Type <b class="mono">${esc(phrase)}</b> to confirm.</p>
+function confirmDelete({ title, text, phrase, run, warning = 'This cannot be undone.', done, after }) {
+  openModal(`<h2 style="color:var(--bad)">${esc(title)}</h2><p>${esc(text)}</p><p class="small"><b>${esc(warning)}</b> Type <b class="mono">${esc(phrase)}</b> to confirm.</p>
     <input type="text" id="del-confirm" autocomplete="off" aria-label="Confirmation phrase" class="mono">
     <div class="row"><button class="btn" id="del-go" disabled style="border-color:var(--bad);color:var(--bad)">${esc(title)}</button><button class="btn ghost" data-act="close">${t('cancel')}</button></div>`);
   const input = document.getElementById('del-confirm');
@@ -1522,9 +1523,9 @@ function confirmDelete({ title, text, phrase, run }) {
     try {
       const r = await withMfa(() => run(input.value));
       closeModal();
-      toast(`Deleted ✓ ${Object.entries(r).filter(([, v]) => typeof v === 'number').map(([k, v]) => `${fmtNum(v)} ${human(k).toLowerCase()}`).join(' · ')}`);
+      toast(done ? done(r) : `Deleted ✓ ${Object.entries(r).filter(([, v]) => typeof v === 'number').map(([k, v]) => `${fmtNum(v)} ${human(k).toLowerCase()}`).join(' · ')}`);
       state.owner.counts = null;
-      render();
+      if (after) after(r); else render();
     } catch (e) { toast(errMsg(e), true); }
   };
 }
@@ -1539,7 +1540,8 @@ async function ownerOrg(id) {
     ${o.members.map((m) => `<tr><td><b>${esc(m.name)}</b></td><td class="small mono">${esc(m.phone || '—')}</td><td class="small">${esc(m.email)}</td><td><span class="badge">${esc(human(m.role))}</span></td><td class="num">${fmtNum(m.leads)}</td>
       <td><form class="row" data-form="owner-cap" data-org="${o.id}" data-id="${m.user_id}" style="gap:6px;flex-wrap:nowrap"><input type="number" name="daily_cap" min="0" ${o.plan ? `max="${o.plan.daily_limit}"` : ''} value="${m.daily_cap ?? ''}" placeholder="No limit" style="width:96px" aria-label="Daily limit for ${esc(m.name)}"><button class="btn sm">Save</button><span class="small muted">${fmtNum(m.used_today)} today</span></form></td>
       <td>${m.leads ? `<button class="btn sm ghost" style="color:var(--bad)" data-act="owner-delete-user-crm" data-org="${o.id}" data-id="${m.user_id}" data-name="${esc(m.name)}" data-count="${m.leads}">Delete this user’s CRM data</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No users</td></tr>'}</tbody></table></div></div>
-  ${dangerZone([{ act: 'owner-delete-org-crm', data: `data-org="${o.id}" data-name="${esc(o.name)}" data-count="${o.crm.leads}"`, title: 'Delete this account’s CRM data', text: `Removes all ${fmtNum(o.crm.leads)} leads and ${fmtNum(o.crm.contacts)} contacts of ${o.name}, with their notes and follow-ups. Users, plan and payments are kept.` }])}`;
+  ${dangerZone([{ act: 'owner-delete-org-crm', data: `data-org="${o.id}" data-name="${esc(o.name)}" data-count="${o.crm.leads}"`, title: 'Delete this account’s CRM data', text: `Removes all ${fmtNum(o.crm.leads)} leads and ${fmtNum(o.crm.contacts)} contacts of ${o.name}, with their notes and follow-ups. Users, plan and payments are kept.` },
+    ...(o.archived_at || o.owner_platform_role ? [] : [{ act: 'owner-remove-org', data: `data-org="${o.id}" data-name="${esc(o.name)}" data-email="${esc(o.owner_email)}"`, title: 'Remove this account from the portal', text: `Hides ${o.name} from the portal and signs its users out of it. Nothing is deleted: the user, leads, payments and history stay in the data. The next time ${o.owner_email} signs in, they start a brand-new account. Accounts with a live plan or a payment in progress can’t be removed.` }])])}`;
 }
 
 async function ownerData() {
@@ -1723,6 +1725,12 @@ const actions = {
   'owner-delete-org-crm': (el) => confirmDelete({ title: 'Delete this account’s CRM data', phrase: 'DELETE CRM DATA',
     text: `Removes all ${el.dataset.count} lead(s) of ${el.dataset.name}, with contacts, notes and follow-ups.`,
     run: (confirm) => POST(`/api/owner/orgs/${el.dataset.org}/crm/delete`, { confirm }) }),
+  'owner-remove-org': (el) => confirmDelete({ title: `Remove ${el.dataset.name} from the portal`, phrase: 'REMOVE ACCOUNT',
+    text: `${el.dataset.name} (${el.dataset.email}) disappears from the portal and its users lose access. Their data stays in the database. Next sign-in with this login starts a new account.`,
+    warning: 'Data is kept; the account only leaves the portal.',
+    done: (r) => `${r.name} removed from the portal ✓`,
+    after: () => (location.hash.startsWith('#/owner/org/') ? go('#/owner') : render()),
+    run: (confirm) => POST(`/api/owner/orgs/${el.dataset.org}/remove`, { confirm }) }),
   'owner-delete-all-crm': () => confirmDelete({ title: 'Delete all customers’ CRM data', phrase: 'DELETE ALL CRM DATA',
     text: 'Removes every lead, contact, note and follow-up from every customer account. Your own owner CRM, users, payments and the audit log are kept.',
     run: (confirm) => POST('/api/owner/crm/delete-all', { confirm }) }),

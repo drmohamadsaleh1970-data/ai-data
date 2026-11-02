@@ -225,7 +225,7 @@ export function ownerOverview({ days = 30 } = {}) {
   const since = iso(new Date(now().getTime() - period * DAY_MS));
   const orgs = db.prepare(`SELECT o.id, o.name, o.kind, u.email AS owner_email,
       (SELECT COUNT(*) FROM membership m WHERE m.org_id = o.id AND m.status = 'ACTIVE') AS members
-    FROM organization o JOIN platform_user u ON u.id = o.owner_user_id ORDER BY o.id`).all();
+    FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.archived_at IS NULL ORDER BY o.id`).all();
   const leadRows = db.prepare(`SELECT org_id, stage, deal_value_aed, first_contact_due, first_contacted_at FROM crm_lead`).all();
   const taskRows = db.prepare('SELECT org_id, due_at FROM follow_up_task WHERE done_at IS NULL').all();
   const actRows = db.prepare('SELECT org_id, created_at FROM lead_activity WHERE created_at >= ?').all(since);
