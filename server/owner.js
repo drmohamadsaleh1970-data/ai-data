@@ -65,18 +65,18 @@ export function exportFile(jobId, user) {
 export function approvals() {
   const db = getDb();
   const pending_cash = db.prepare(`SELECT c.*, o.name AS org_name, u.email AS requested_by_email, u.name AS requested_by_name, u.phone AS requested_by_phone
-    FROM cash_payment_request c JOIN organization o ON o.id = c.org_id JOIN platform_user u ON u.id = c.requested_by WHERE c.status = 'PENDING_PAYMENT' ORDER BY c.id`).all();
+    FROM cash_payment_request c JOIN organization o ON o.id = c.org_id JOIN platform_user u ON u.id = c.requested_by WHERE c.status = 'PENDING_PAYMENT' AND o.archived_at IS NULL ORDER BY c.id`).all();
   const awaiting_activation = db.prepare(`SELECT s.id, s.plan_code, s.created_at, o.name AS org_name,
       (SELECT u.email FROM activation_magic_link l JOIN platform_user u ON u.id = l.user_id WHERE l.subscription_id = s.id ORDER BY l.id DESC LIMIT 1) AS customer_email,
       (SELECT u.phone FROM activation_magic_link l JOIN platform_user u ON u.id = l.user_id WHERE l.subscription_id = s.id ORDER BY l.id DESC LIMIT 1) AS customer_phone,
       (SELECT l.expires_at FROM activation_magic_link l WHERE l.subscription_id = s.id AND l.used_at IS NULL AND l.revoked_at IS NULL ORDER BY l.id DESC LIMIT 1) AS code_expires_at
-    FROM subscription s JOIN organization o ON o.id = s.org_id WHERE s.status = 'AWAITING_ACTIVATION' ORDER BY s.id`).all();
+    FROM subscription s JOIN organization o ON o.id = s.org_id WHERE s.status = 'AWAITING_ACTIVATION' AND o.archived_at IS NULL ORDER BY s.id`).all();
   return { pending_cash, awaiting_activation, counts: { to_confirm: pending_cash.length, awaiting_activation: awaiting_activation.length } };
 }
 
 export function dashboard() {
   const db = getDb();
-  const orgs = db.prepare('SELECT o.id, o.name, o.kind, o.created_at, u.email AS owner_email, (SELECT COUNT(*) FROM membership m WHERE m.org_id = o.id AND m.status=\'ACTIVE\') AS members FROM organization o JOIN platform_user u ON u.id = o.owner_user_id ORDER BY o.id').all();
+  const orgs = db.prepare('SELECT o.id, o.name, o.kind, o.created_at, u.email AS owner_email, (SELECT COUNT(*) FROM membership m WHERE m.org_id = o.id AND m.status=\'ACTIVE\') AS members FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.archived_at IS NULL ORDER BY o.id').all();
   const withSub = orgs.map((o) => {
     const s = activeSubscription(o.id);
     const latest = db.prepare('SELECT status, plan_code, provider, current_period_end FROM subscription WHERE org_id = ? ORDER BY id DESC LIMIT 1').get(o.id);
@@ -96,6 +96,7 @@ export function dashboard() {
     hot_revenue_this_month: db.prepare("SELECT COALESCE(SUM(amount_cents),0) AS cents, COUNT(*) AS leads FROM hot_lead_billing_ledger WHERE substr(created_at,1,7) = ?").get(month),
     overdue: withSub.filter((o) => ['PAST_DUE', 'SUSPENDED'].includes(o.status)),
     organizations: withSub,
+    removed_organizations: removedOrgs(),
     ...approvals(),
     cold_usage_today: db.prepare('SELECT o.name, q.local_day, q.plan_limit, q.committed_used FROM daily_quota_account q JOIN organization o ON o.id = q.org_id ORDER BY q.local_day DESC, q.committed_used DESC LIMIT 30').all(),
     data: db.prepare("SELECT COUNT(*) AS investors, SUM(CASE WHEN rights_status='APPROVED' THEN 1 ELSE 0 END) AS approved, SUM(CASE WHEN rights_status='RESTRICTED_PENDING_REVIEW' THEN 1 ELSE 0 END) AS pending, SUM(suppressed) AS suppressed, (SELECT COUNT(*) FROM investor_transaction) AS transactions FROM investor_contact").get(),
@@ -143,7 +144,7 @@ export function auditLog({ limit = 200, action } = {}) {
 // --- Owner: one customer account in detail, per-user daily limits ----------------------
 export function orgDetail(orgId) {
   const db = getDb();
-  const org = db.prepare('SELECT o.id, o.name, o.kind, o.created_at, u.email AS owner_email FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.id = ?').get(Number(orgId));
+  const org = db.prepare('SELECT o.id, o.name, o.kind, o.created_at, o.archived_at, u.platform_role AS owner_platform_role, u.email AS owner_email FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.id = ?').get(Number(orgId));
   if (!org) throw new HttpError(404, 'NOT_FOUND');
   const sub = activeSubscription(org.id);
   return {
@@ -263,4 +264,40 @@ export function clearImportHistory({ actor, confirm }) {
   const deleted = getDb().prepare("DELETE FROM source_import_job WHERE status != 'RUNNING' OR started_at < ?").run(stuckBefore()).changes;
   audit({ actor: actor.id, action: 'OWNER_IMPORT_HISTORY_CLEARED', meta: { deleted } });
   return { deleted };
+}
+
+// --- Owner: remove an account from the portal ------------------------------------------
+// The account disappears from every portal list and its people lose access to it, so the
+// next sign-in with that Google login starts fresh (a new account). Nothing is deleted:
+// the user, organization, leads, payments and audit trail stay in the database.
+// Accounts with money involved (live plan, confirmed payment awaiting activation, or a
+// payment waiting for confirmation) cannot be removed until that is settled.
+export function removeOrgFromPortal({ actor, orgId, confirm }) {
+  confirmed(confirm, 'REMOVE ACCOUNT');
+  const db = getDb();
+  const org = db.prepare('SELECT o.id, o.name, o.archived_at, u.email, u.platform_role FROM organization o JOIN platform_user u ON u.id = o.owner_user_id WHERE o.id = ?').get(Number(orgId));
+  if (!org) throw new HttpError(404, 'NOT_FOUND');
+  if (org.archived_at) throw new HttpError(409, 'ALREADY_REMOVED');
+  if (org.platform_role) throw new HttpError(409, 'OWNER_ACCOUNT', 'The AI-DATA owner CRM cannot be removed.');
+  const live = db.prepare("SELECT status FROM subscription WHERE org_id = ? AND status IN ('ACTIVE','PAST_DUE','AWAITING_ACTIVATION') ORDER BY id DESC LIMIT 1").get(org.id);
+  if (live) throw new HttpError(409, 'HAS_PLAN', live.status === 'AWAITING_ACTIVATION'
+    ? 'This account has a confirmed payment waiting for activation. Remove the duplicate account instead, or terminate the plan first.'
+    : 'This account has a live plan. Terminate the plan first.');
+  if (db.prepare("SELECT 1 FROM cash_payment_request WHERE org_id = ? AND status = 'PENDING_PAYMENT'").get(org.id)) {
+    throw new HttpError(409, 'HAS_PENDING_PAYMENT', 'This account has a payment waiting for confirmation. Confirm or reject it first.');
+  }
+  return tx((conn) => {
+    const ts = iso();
+    conn.prepare('UPDATE organization SET archived_at = ?, archived_by = ? WHERE id = ?').run(ts, actor.id, org.id);
+    const members = conn.prepare("UPDATE membership SET status = 'REMOVED' WHERE org_id = ? AND status = 'ACTIVE'").run(org.id).changes;
+    conn.prepare('UPDATE session SET active_org_id = NULL WHERE active_org_id = ?').run(org.id);
+    conn.prepare('INSERT INTO audit_log (at, actor_user_id, org_id, action, target, meta_json) VALUES (?,?,?,?,?,?)')
+      .run(ts, actor.id, org.id, 'OWNER_ACCOUNT_REMOVED_FROM_PORTAL', `org:${org.id}`, JSON.stringify({ name: org.name, owner_email: org.email, members }));
+    return { id: org.id, name: org.name, members_removed: members };
+  });
+}
+
+export function removedOrgs() {
+  return getDb().prepare(`SELECT o.id, o.name, o.kind, o.archived_at, u.email AS owner_email, u.name AS owner_name FROM organization o
+    JOIN platform_user u ON u.id = o.owner_user_id WHERE o.archived_at IS NOT NULL ORDER BY o.archived_at DESC LIMIT 100`).all();
 }

@@ -616,6 +616,8 @@ const ADDED_COLUMNS = [
   ['hot_lead_pool', 'allocation_method', 'TEXT'],
   ['hot_lead_pool', 'campaign_id', 'INTEGER'],         // lead generation campaign that produced it
   ['hot_lead_pool', 'utm_json', 'TEXT'],               // utm_source/medium/campaign/content/term
+  ['organization', 'archived_at', 'TEXT'],            // removed from the portal by the owner; data kept
+  ['organization', 'archived_by', 'INTEGER'],
   ['data_provenance', 'sync_filter_json', 'TEXT'],     // owner's saved API sync filter (ai-home.world)
   ['source_import_job', 'rows_skipped_no_contact', 'INTEGER'], // API rows dropped: no phone and no email
   ['source_import_job', 'rows_skipped_filter', 'INTEGER'],     // API rows left out by the owner's filter

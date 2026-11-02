@@ -192,6 +192,16 @@ export function createApp(options = {}) {
     if (b.terms !== true) throw new HttpError(400, 'TERMS_REQUIRED');
     const db = getDb();
     const ts = iso();
+    // One account per person and kind: a second submit (double click, repeated sign-up)
+    // returns the account they already own instead of creating a duplicate.
+    if (!req.user.platform_role) {
+      const existing = db.prepare(`SELECT o.id FROM organization o JOIN membership m ON m.org_id = o.id AND m.user_id = o.owner_user_id AND m.status = 'ACTIVE'
+        WHERE o.owner_user_id = ? AND o.kind = ? AND o.archived_at IS NULL ORDER BY o.id LIMIT 1`).get(req.user.id, b.kind);
+      if (existing) {
+        db.prepare('UPDATE session SET active_org_id = ? WHERE id_hash = ?').run(existing.id, req.session.id_hash);
+        return { id: existing.id, existing: true };
+      }
+    }
     const id = Number(db.prepare('INSERT INTO organization (name, kind, owner_user_id, business_contact, license_no, language, timezone, terms_accepted_at, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(String(b.name), b.kind, req.user.id, b.business_contact ?? null, b.license_no ?? null, b.language || 'en', b.timezone || 'Asia/Dubai', ts, ts).lastInsertRowid);
     db.prepare("INSERT INTO membership (org_id, user_id, role, created_at) VALUES (?,?,'ORG_OWNER',?)").run(id, req.user.id, ts);
@@ -323,6 +333,7 @@ export function createApp(options = {}) {
   r.get('/owner/orgs/:id/crm/leads/:leadId', OWNER, ok((req) => dashboard.ownerLeadDetail({ actor: req.user, orgId: req.params.id, leadId: req.params.leadId })));
   r.patch('/owner/orgs/:id/crm/leads/:leadId', OWNER, ok((req) => dashboard.ownerUpdateLead({ actor: req.user, orgId: req.params.id, leadId: req.params.leadId, stage: req.body?.stage, assigned_user_id: req.body?.assigned_user_id })));
   r.patch('/owner/orgs/:orgId/members/:userId', OWNER, ok((req) => owner.setUserCap({ actor: req.user, orgId: req.params.orgId, userId: req.params.userId, value: req.body?.daily_cap })));
+  r.post('/owner/orgs/:id/remove', OWNER, requireRecentMfa, ok((req) => owner.removeOrgFromPortal({ actor: req.user, orgId: req.params.id, confirm: req.body?.confirm })));
   r.post('/owner/orgs/:orgId/crm/delete', OWNER, requireRecentMfa, ok((req) => owner.deleteCrmData({ actor: req.user, orgId: req.params.orgId, userId: req.body?.user_id || null, confirm: req.body?.confirm })));
   r.post('/owner/crm/delete-all', OWNER, requireRecentMfa, ok((req) => owner.deleteAllCrmData({ actor: req.user, confirm: req.body?.confirm })));
   r.post('/owner/investors/delete-all', OWNER, requireRecentMfa, ok((req) => owner.deleteAllInvestorData({ actor: req.user, confirm: req.body?.confirm })));
