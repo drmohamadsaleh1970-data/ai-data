@@ -156,6 +156,77 @@ export async function parseFile(base64, fileName = '') {
   return table.slice(headerIdx + 1).map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i]])));
 }
 
+// --- Sync filter ---------------------------------------------------------------------
+// The owner chooses which API rows are worth importing. Contact is mandatory for API sync:
+// a record with neither a phone nor an email can never be worked, so it is never imported.
+// Area terms also match the project name, and common nicknames map to DLD area names.
+const AREA_ALIASES = {
+  jvc: ['jumeirah village circle', 'al barsha south fourth'],
+  'dubai marina': ['dubai marina', 'marsa dubai'],
+  marina: ['dubai marina', 'marsa dubai'],
+  downtown: ['downtown', 'burj khalifa'],
+  'downtown dubai': ['downtown', 'burj khalifa'],
+  'business bay': ['business bay'],
+  palm: ['palm jumeirah', 'palm jumeira'],
+  'palm jumeirah': ['palm jumeirah', 'palm jumeira'],
+};
+const CONTACT_RULES = ['ANY', 'PHONE', 'EMAIL', 'BOTH'];
+const list = (v) => (Array.isArray(v) ? v : String(v ?? '').split(','))
+  .map((x) => String(x).trim().toLowerCase()).filter(Boolean).slice(0, 50);
+const num = (v) => (v === '' || v == null || !Number.isFinite(Number(v)) || Number(v) < 0 ? null : Math.round(Number(v)));
+const day = (v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : null);
+
+export function normalizeFilter(f = {}) {
+  f = f || {};
+  return {
+    contact: CONTACT_RULES.includes(String(f.contact || '').toUpperCase()) ? String(f.contact).toUpperCase() : 'ANY',
+    client_role: ['BUYER', 'SELLER'].includes(String(f.client_role || '').toUpperCase()) ? String(f.client_role).toUpperCase() : null,
+    nationalities: list(f.nationalities),
+    areas: list(f.areas),
+    property_types: list(f.property_types),
+    min_price_aed: num(f.min_price_aed),
+    max_price_aed: num(f.max_price_aed),
+    date_from: day(f.date_from),
+    date_to: day(f.date_to),
+  };
+}
+
+export function hasContact(r, rule = 'ANY') {
+  if (rule === 'PHONE') return !!r.phone;
+  if (rule === 'EMAIL') return !!r.email;
+  if (rule === 'BOTH') return !!(r.phone && r.email);
+  return !!(r.phone || r.email);
+}
+
+// Returns null when the record passes, otherwise the reason it was left out.
+export function filterReason(r, f) {
+  const has = (value, terms) => { const v = String(value || '').toLowerCase(); return terms.some((t) => v.includes(t)); };
+  if (f.client_role && r.client_role !== f.client_role) return 'role';
+  if (f.nationalities.length && !has(r.nationality, f.nationalities)) return 'nationality';
+  if (f.areas.length) {
+    const terms = f.areas.flatMap((a) => AREA_ALIASES[a] || [a]);
+    if (!has(r.area, terms) && !has(r.project, terms)) return 'area';
+  }
+  if (f.property_types.length && !has(r.property_type, f.property_types)) return 'property_type';
+  if (f.min_price_aed != null && !(r.price_aed >= f.min_price_aed)) return 'price';
+  if (f.max_price_aed != null && !(r.price_aed <= f.max_price_aed)) return 'price';
+  if (f.date_from && !(r.registration_date >= f.date_from)) return 'date';
+  if (f.date_to && !(r.registration_date <= f.date_to)) return 'date';
+  return null;
+}
+
+export function describeFilter(f) {
+  const parts = [{ ANY: 'phone or email', PHONE: 'phone required', EMAIL: 'email required', BOTH: 'phone and email' }[f.contact]];
+  if (f.client_role) parts.push(f.client_role === 'BUYER' ? 'buyers' : 'sellers');
+  if (f.nationalities.length) parts.push(`nationality: ${f.nationalities.join(', ')}`);
+  if (f.areas.length) parts.push(`area: ${f.areas.join(', ')}`);
+  if (f.property_types.length) parts.push(`type: ${f.property_types.join(', ')}`);
+  if (f.min_price_aed != null) parts.push(`≥ AED ${f.min_price_aed.toLocaleString('en')}`);
+  if (f.max_price_aed != null) parts.push(`≤ AED ${f.max_price_aed.toLocaleString('en')}`);
+  if (f.date_from || f.date_to) parts.push(`dates ${f.date_from || '…'} → ${f.date_to || '…'}`);
+  return parts.join(' · ');
+}
+
 // --- Import --------------------------------------------------------------------------
 function provenanceId(conn) {
   const row = conn.prepare('SELECT id FROM data_provenance WHERE source_name = ?').get(SOURCE_NAME);
@@ -178,8 +249,18 @@ export function preview(rows) {
   };
 }
 
-export function importRows({ rows, actor, mode, fileName }) {
+export function importRows({ rows, actor, mode, fileName, filter = null, requireContact = false }) {
   const pv = preview(rows);
+  const f = filter ? normalizeFilter(filter) : null;
+  // Decide up front which valid rows are kept, so counts are exact and the transaction
+  // below only ever sees rows that passed the contact rule and the owner's filter.
+  const skipped = { no_contact: 0, by_filter: 0, reasons: {} };
+  for (const p of pv.parsed) {
+    if (p.errors.length) continue;
+    if (requireContact && !hasContact(p.record, f?.contact || 'ANY')) { p.skip = true; skipped.no_contact++; continue; }
+    const why = f && filterReason(p.record, f);
+    if (why) { p.skip = true; skipped.by_filter++; skipped.reasons[why] = (skipped.reasons[why] || 0) + 1; }
+  }
   if (pv.missing_required.length) throw new HttpError(400, 'MISSING_REQUIRED_COLUMNS', pv.missing_required.join(', '));
   const db = getDb();
   const jobId = Number(db.prepare("INSERT INTO source_import_job (source, mode, file_name, started_by, started_at, status, rows_read) VALUES (?,?,?,?,?,'RUNNING',?)")
@@ -189,8 +270,8 @@ export function importRows({ rows, actor, mode, fileName }) {
     const ts = iso();
     const s = { investors_created: 0, transactions_created: 0, transactions_updated: 0 };
     const ambiguousNames = new Set();
-    for (const { record: r, errors } of pv.parsed) {
-      if (errors.length) continue;
+    for (const { record: r, errors, skip } of pv.parsed) {
+      if (errors.length || skip) continue;
       const existingTxn = conn.prepare('SELECT id, investor_id FROM investor_transaction WHERE source_txn_id = ?').get(r.source_txn_id);
       let investorId = existingTxn?.investor_id;
       if (!investorId) {
@@ -225,10 +306,13 @@ export function importRows({ rows, actor, mode, fileName }) {
     }
     return s;
   });
-  db.prepare(`UPDATE source_import_job SET finished_at = ?, status = 'COMPLETED', investors_created = ?, transactions_created = ?, transactions_updated = ?, rows_rejected = ?, errors_json = ? WHERE id = ?`)
-    .run(iso(), stats.investors_created, stats.transactions_created, stats.transactions_updated, pv.rejected, JSON.stringify(pv.sample_errors), jobId);
-  audit({ actor: actor?.id, action: 'AIHOME_SOURCE_IMPORT', target: `import:${jobId}`, meta: { mode, fileName, rows: rows.length, ...stats, rejected: pv.rejected } });
-  return { job_id: jobId, rows: rows.length, rejected: pv.rejected, ...stats, sample_errors: pv.sample_errors };
+  const filterText = f || requireContact ? describeFilter(f || normalizeFilter()) : null;
+  db.prepare(`UPDATE source_import_job SET finished_at = ?, status = 'COMPLETED', investors_created = ?, transactions_created = ?, transactions_updated = ?, rows_rejected = ?, errors_json = ?,
+      rows_skipped_no_contact = ?, rows_skipped_filter = ?, filter_text = ? WHERE id = ?`)
+    .run(iso(), stats.investors_created, stats.transactions_created, stats.transactions_updated, pv.rejected, JSON.stringify(pv.sample_errors),
+      skipped.no_contact, skipped.by_filter, filterText, jobId);
+  audit({ actor: actor?.id, action: 'AIHOME_SOURCE_IMPORT', target: `import:${jobId}`, meta: { mode, fileName, rows: rows.length, ...stats, rejected: pv.rejected, skipped_no_contact: skipped.no_contact, skipped_by_filter: skipped.by_filter, filter: filterText } });
+  return { job_id: jobId, rows: rows.length, rejected: pv.rejected, ...stats, skipped_no_contact: skipped.no_contact, skipped_by_filter: skipped.by_filter, skipped_reasons: skipped.reasons, filter: filterText, sample_errors: pv.sample_errors };
 }
 
 // --- API pull ----------------------------------------------------------------------
@@ -237,7 +321,7 @@ export function importRows({ rows, actor, mode, fileName }) {
 // either an array of row objects, or { rows|data|items: [...], next?: url, has_more?: bool }.
 // Row keys use the same column names as the investor-history table.
 const MAX_PAGES = 500;
-export async function syncFromApi({ actor } = {}) {
+async function fetchApiRows() {
   const { url, token } = config.aihomeSource;
   if (!url) throw new HttpError(503, 'AIHOME_SOURCE_NOT_CONNECTED', 'Set AIHOME_SOURCE_URL (and AIHOME_SOURCE_TOKEN) to pull investor data from ai-home.world.');
   const rows = [];
@@ -263,7 +347,45 @@ export async function syncFromApi({ actor } = {}) {
       next = u.href;
     } else next = null;
   }
-  return importRows({ rows, actor, mode: 'API' });
+  return rows;
+}
+
+export function savedSyncFilter() {
+  const row = getDb().prepare('SELECT sync_filter_json FROM data_provenance WHERE source_name = ?').get(SOURCE_NAME);
+  try { return normalizeFilter(row?.sync_filter_json ? JSON.parse(row.sync_filter_json) : {}); } catch { return normalizeFilter(); }
+}
+
+function saveSyncFilter(f, actor) {
+  tx((conn) => {
+    const prov = provenanceId(conn);
+    conn.prepare('UPDATE data_provenance SET sync_filter_json = ? WHERE id = ?').run(JSON.stringify(f), prov);
+  });
+  audit({ actor: actor?.id, action: 'AIHOME_SYNC_FILTER_SAVED', target: SOURCE_NAME, meta: { filter: describeFilter(f) } });
+}
+
+// API sync. Rows without a phone or email are never imported. `filter` (optional, else the
+// saved one) narrows what is kept; `dryRun` fetches and counts without writing anything.
+export async function syncFromApi({ actor, filter, save = false, dryRun = false } = {}) {
+  const f = filter ? normalizeFilter(filter) : savedSyncFilter();
+  if (save && !dryRun) saveSyncFilter(f, actor);
+  const rows = await fetchApiRows();
+  if (dryRun) {
+    const pv = preview(rows);
+    const out = { rows: rows.length, rejected: pv.rejected, skipped_no_contact: 0, skipped_by_filter: 0, skipped_reasons: {}, would_import: 0, filter: describeFilter(f), sample: [] };
+    for (const p of pv.parsed) {
+      if (p.errors.length) continue;
+      if (!hasContact(p.record, f.contact)) { out.skipped_no_contact++; continue; }
+      const why = filterReason(p.record, f);
+      if (why) { out.skipped_by_filter++; out.skipped_reasons[why] = (out.skipped_reasons[why] || 0) + 1; continue; }
+      out.would_import++;
+      if (out.sample.length < 5) {
+        const r = p.record;
+        out.sample.push({ name: r.full_name, role: r.client_role, nationality: r.nationality, area: r.area, project: r.project, price_aed: r.price_aed, date: r.registration_date, has_phone: !!r.phone, has_email: !!r.email });
+      }
+    }
+    return out;
+  }
+  return importRows({ rows, actor, mode: 'API', filter: f, requireContact: true });
 }
 
 export function sourceStatus() {
@@ -274,6 +396,12 @@ export function sourceStatus() {
     api: config.aihomeSource.url ? 'CONNECTED' : 'NOT_CONNECTED',
     api_url_host: config.aihomeSource.url ? new URL(config.aihomeSource.url).host : null,
     scheduled_sync_minutes: config.aihomeSource.syncMinutes || null,
+    sync_filter: savedSyncFilter(),
+    suggestions: prov ? {
+      nationalities: db.prepare('SELECT nationality AS v FROM investor_contact WHERE provenance_id = ? AND nationality IS NOT NULL GROUP BY nationality ORDER BY COUNT(*) DESC LIMIT 60').all(prov.id).map((x) => x.v),
+      areas: db.prepare("SELECT area AS v FROM investor_transaction WHERE provenance_id = ? AND area <> 'Unknown' GROUP BY area ORDER BY COUNT(*) DESC LIMIT 80").all(prov.id).map((x) => x.v),
+      property_types: db.prepare("SELECT property_type AS v FROM investor_transaction WHERE provenance_id = ? AND property_type <> 'Unknown' GROUP BY property_type ORDER BY COUNT(*) DESC LIMIT 30").all(prov.id).map((x) => x.v),
+    } : { nationalities: [], areas: [], property_types: [] },
     rights_approved: !!prov?.allows_subscriber_transfer,
     totals: prov
       ? db.prepare(`SELECT COUNT(*) AS investors, SUM(CASE WHEN rights_status='APPROVED' THEN 1 ELSE 0 END) AS approved, SUM(CASE WHEN identity_confidence='AMBIGUOUS' THEN 1 ELSE 0 END) AS ambiguous,

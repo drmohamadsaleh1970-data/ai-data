@@ -216,10 +216,12 @@ function shell(name, parts, content) {
   if (isFinance()) {
     const sub = parts[1] || 'dashboard';
     nav += `<div class="nav-group nav-console">${t('owner_console')}</div>`;
-    const waiting = (m.approvals_waiting?.to_confirm || 0) + (m.approvals_waiting?.awaiting_activation || 0);
+    // Badge = payments that need the owner's action only. Already-confirmed payments that
+    // are waiting for the customer to activate are not an owner task, so they don't count.
+    const waiting = m.approvals_waiting?.to_confirm || 0;
     const approvalsActive = name === 'owner' && (sub === 'approvals' || sub === 'finance');
     nav += link('#/owner', 'owner_dashboard', '◆', name === 'owner' && sub === 'dashboard');
-    nav += `<a class="nav-link ${approvalsActive ? 'active' : ''}" href="#/owner/approvals"><span class="ico">✓</span>Payment approvals${waiting ? ` <span class="badge ${m.approvals_waiting.to_confirm ? 'bad' : 'gold'}" style="margin-inline-start:auto" aria-label="${waiting} waiting">${waiting}</span>` : ''}</a>`;
+    nav += `<a class="nav-link ${approvalsActive ? 'active' : ''}" href="#/owner/approvals"><span class="ico">✓</span>Payment approvals${waiting ? ` <span class="badge bad" style="margin-inline-start:auto" aria-label="${waiting} to confirm">${waiting}</span>` : ''}</a>`;
     if (isOwner()) {
       nav += group('nav_owner_data', link('#/owner/source', 'data_source', '⇩', name === 'owner' && sub === 'source')
         + link('#/owner/data', 'master_data', '⛁', name === 'owner' && sub === 'data')
@@ -1580,15 +1582,54 @@ async function ownerSource() {
       <div class="row"><button class="btn" data-act="src-preview">Preview mapping</button><button class="btn gold" data-act="src-import">Import</button></div>
       <div id="src-out"></div></div>
     <div class="card grid" style="gap:10px"><div class="row" style="justify-content:space-between"><h3 style="margin:0">API sync</h3>${statusBadge(s.api)}</div>
-      ${s.api === 'CONNECTED' ? `<p class="small">Source: <span class="mono">${esc(s.api_url_host)}</span>${s.scheduled_sync_minutes ? ` · every ${s.scheduled_sync_minutes} min` : ' · manual only'}</p><div><button class="btn primary" data-act="src-sync">Sync now</button></div>`
+      ${s.api === 'CONNECTED' ? `<p class="small">Source: <span class="mono">${esc(s.api_url_host)}</span>${s.scheduled_sync_minutes ? ` · every ${s.scheduled_sync_minutes} min` : ' · manual only'}</p>${syncFilterForm(s)}`
         : '<p class="small muted">Set AIHOME_SOURCE_URL and AIHOME_SOURCE_TOKEN on the server to pull investor data from an ai-home.world endpoint (paged JSON, same column names). Until then, use file import.</p>'}
     </div>
   </div>
   <div class="card" style="margin-top:16px"><div class="row"><h3 style="margin:0">Import history</h3><div class="spacer"></div>${s.jobs.length ? `<button class="btn sm" style="border-color:var(--bad);color:var(--bad)" data-act="import-history-clear" data-count="${s.jobs.length}">Clear import history</button>` : ''}</div>
     <p class="small muted">Deleting history removes the log entries only; the investor records stay. To remove records, use Delete all investor data on Master Cold database.</p>
-    <div class="table-wrap"><table><thead><tr><th>#</th><th>${t('date')}</th><th>Mode</th><th>File</th><th class="num">Rows</th><th class="num">New investors</th><th class="num">New txns</th><th class="num">Updated</th><th class="num">Rejected</th><th>By</th><th></th></tr></thead>
-    <tbody>${s.jobs.map((j) => `<tr><td>${j.id}</td><td class="small">${fmtDT(j.started_at)}</td><td><span class="badge">${esc(j.mode)}</span></td><td class="small">${esc(j.file_name || '—')}</td><td class="num">${fmtNum(j.rows_read)}</td><td class="num">${fmtNum(j.investors_created)}</td><td class="num">${fmtNum(j.transactions_created)}</td><td class="num">${fmtNum(j.transactions_updated)}</td><td class="num">${j.rows_rejected ? `<span class="badge warn">${j.rows_rejected}</span>` : 0}</td><td class="small">${esc(j.started_by_email || 'scheduled')}</td><td>${j.status === 'RUNNING' ? '' : `<button class="btn sm ghost" data-act="import-job-delete" data-id="${j.id}" aria-label="Delete import ${j.id} from history">Delete</button>`}</td></tr>`).join('') || '<tr><td colspan="11" class="empty">No imports yet.</td></tr>'}</tbody></table></div></div>`;
+    <div class="table-wrap"><table><thead><tr><th>#</th><th>${t('date')}</th><th>Mode</th><th>File</th><th class="num">Rows</th><th class="num">New investors</th><th class="num">New txns</th><th class="num">Updated</th><th class="num">Rejected</th><th class="num">Skipped</th><th>By</th><th></th></tr></thead>
+    <tbody>${s.jobs.map((j) => `<tr><td>${j.id}</td><td class="small">${fmtDT(j.started_at)}</td><td><span class="badge">${esc(j.mode)}</span></td><td class="small">${esc(j.file_name || '—')}</td><td class="num">${fmtNum(j.rows_read)}</td><td class="num">${fmtNum(j.investors_created)}</td><td class="num">${fmtNum(j.transactions_created)}</td><td class="num">${fmtNum(j.transactions_updated)}</td><td class="num">${j.rows_rejected ? `<span class="badge warn">${j.rows_rejected}</span>` : 0}</td><td class="num small" title="${esc(j.filter_text || '')}">${(j.rows_skipped_no_contact || j.rows_skipped_filter) ? `${fmtNum(j.rows_skipped_no_contact || 0)} no contact<br>${fmtNum(j.rows_skipped_filter || 0)} by filter` : '—'}</td><td class="small">${esc(j.started_by_email || 'scheduled')}</td><td>${j.status === 'RUNNING' ? '' : `<button class="btn sm ghost" data-act="import-job-delete" data-id="${j.id}" aria-label="Delete import ${j.id} from history">Delete</button>`}</td></tr>`).join('') || '<tr><td colspan="12" class="empty">No imports yet.</td></tr>'}</tbody></table></div></div>`;
 }
+
+// API sync filter. Contact is always required (phone or email at minimum); everything
+// else is optional and narrows which ai-home.world rows are imported. Saved on each sync.
+function syncFilterForm(s) {
+  const f = s.sync_filter || {};
+  const sug = s.suggestions || {};
+  const dl = (id, vals) => `<datalist id="${id}">${(vals || []).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>`;
+  const opt = (v, label, cur) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${label}</option>`;
+  const join = (a) => esc((a || []).join(', '));
+  return `<form id="sync-filter" class="grid" style="gap:10px;border-top:1px solid var(--line);padding-top:12px" onsubmit="return false">
+    <div class="row" style="justify-content:space-between"><b>What to import</b><button type="button" class="btn sm ghost" data-act="sync-filter-reset">Clear filters</button></div>
+    <div class="grid g2" style="gap:10px">
+      <label class="field">Contact details<select name="contact">${opt('ANY', 'Phone or email (minimum)', f.contact)}${opt('PHONE', 'Phone required', f.contact)}${opt('EMAIL', 'Email required', f.contact)}${opt('BOTH', 'Phone and email', f.contact)}</select></label>
+      <label class="field">Client<select name="client_role">${opt('', 'Buyers and sellers', f.client_role || '')}${opt('BUYER', 'Buyers only', f.client_role)}${opt('SELLER', 'Sellers only', f.client_role)}</select></label>
+      <label class="field">Nationality<input name="nationalities" list="dl-nat" placeholder="e.g. India, Pakistan" value="${join(f.nationalities)}"></label>
+      <label class="field">Area or project<input name="areas" list="dl-area" placeholder="e.g. JVC, Dubai Marina" value="${join(f.areas)}"></label>
+      <label class="field">Property type<input name="property_types" list="dl-type" placeholder="e.g. Villa, Unit" value="${join(f.property_types)}"></label>
+      <div class="row" style="gap:8px;align-items:end">
+        <label class="field" style="flex:1">Min price (AED)<input name="min_price_aed" type="number" min="0" step="100000" placeholder="3000000" value="${f.min_price_aed ?? ''}"></label>
+        <label class="field" style="flex:1">Max price (AED)<input name="max_price_aed" type="number" min="0" step="100000" placeholder="any" value="${f.max_price_aed ?? ''}"></label></div>
+      <label class="field">Registered from<input name="date_from" type="date" value="${esc(f.date_from || '')}"></label>
+      <label class="field">Registered to<input name="date_to" type="date" value="${esc(f.date_to || '')}"></label>
+    </div>
+    ${dl('dl-nat', sug.nationalities)}${dl('dl-area', ['JVC', 'Dubai Marina', 'Downtown', 'Business Bay', 'Palm Jumeirah', ...(sug.areas || [])])}${dl('dl-type', sug.property_types)}
+    <p class="small muted" style="margin:0">Records with no phone and no email are never imported. Separate several values with commas. Area also matches the project name; JVC, Marina and Downtown are matched to their official area names. The filter is saved and also used by scheduled syncs.</p>
+    <div class="row"><button type="button" class="btn" data-act="src-sync-preview">Preview count</button><button type="button" class="btn primary" data-act="src-sync">Sync now</button></div>
+    <div id="sync-out"></div></form>`;
+}
+
+function readSyncFilter() {
+  const form = document.getElementById('sync-filter');
+  if (!form) return null;
+  const d = Object.fromEntries(new FormData(form).entries());
+  const csv = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return { ...d, nationalities: csv(d.nationalities), areas: csv(d.areas), property_types: csv(d.property_types) };
+}
+
+const SKIP_LABEL = { role: 'buyer/seller', nationality: 'nationality', area: 'area', property_type: 'property type', price: 'price', date: 'date' };
+const skipText = (r) => Object.entries(r.skipped_reasons || {}).map(([k, v]) => `${SKIP_LABEL[k] || k}: ${fmtNum(v)}`).join(' · ');
 
 function readUpload(id) {
   return new Promise((res, rej) => {
@@ -1796,10 +1837,30 @@ const actions = {
     toast(`Imported: ${r.transactions_created} new transactions, ${r.investors_created} new investors, ${r.transactions_updated} updated, ${r.rejected} rejected`);
     state.ih.counts = null; state.owner.counts = null; render();
   },
-  'src-sync': async () => {
-    const r = await withMfa(() => POST('/api/owner/source/sync'));
-    toast(`Synced: ${r.transactions_created} new, ${r.transactions_updated} updated, ${r.rejected} rejected`);
-    state.owner.counts = null; render();
+  'src-sync': async (el) => {
+    el.disabled = true;
+    try {
+      const r = await withMfa(() => POST('/api/owner/source/sync', { filter: readSyncFilter(), save: true }));
+      toast(`Synced: ${r.transactions_created} new, ${r.transactions_updated} updated · skipped ${r.skipped_no_contact} without contact, ${r.skipped_by_filter} by filter, ${r.rejected} rejected`);
+      state.owner.counts = null; render();
+    } catch (e) { toast(errMsg(e), true); el.disabled = false; }
+  },
+  'src-sync-preview': async (el) => {
+    const out = document.getElementById('sync-out');
+    el.disabled = true; out.innerHTML = '<div class="small muted">Reading ai-home.world…</div>';
+    try {
+      const r = await POST('/api/owner/source/sync/preview', { filter: readSyncFilter() });
+      out.innerHTML = `<div class="banner ${r.would_import ? 'ok' : 'warn'}"><b>${fmtNum(r.would_import)}</b> of ${fmtNum(r.rows)} rows would be imported</div>
+        <div class="small muted">${fmtNum(r.skipped_no_contact)} without phone/email · ${fmtNum(r.skipped_by_filter)} outside the filter${skipText(r) ? ` (${esc(skipText(r))})` : ''} · ${fmtNum(r.rejected)} unreadable</div>
+        ${r.sample.length ? `<div class="table-wrap"><table><thead><tr><th>${t('name')}</th><th>Role</th><th>Nationality</th><th>Area / project</th><th class="num">AED</th><th>Contact</th></tr></thead><tbody>${r.sample.map((x) => `<tr><td>${esc(x.name)}</td><td class="small">${esc(human(x.role))}</td><td class="small">${esc(x.nationality || '—')}</td><td class="small">${esc(x.area)}${x.project ? ` · ${esc(x.project)}` : ''}</td><td class="num">${x.price_aed == null ? '—' : fmtNum(x.price_aed)}</td><td class="small">${x.has_phone ? '📞' : ''}${x.has_email ? ' ✉' : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+    } catch (e) { out.innerHTML = `<div class="banner bad">${esc(errMsg(e))}</div>`; }
+    el.disabled = false;
+  },
+  'sync-filter-reset': () => {
+    const form = document.getElementById('sync-filter');
+    form.querySelectorAll('input').forEach((i) => { i.value = ''; });
+    form.querySelectorAll('select').forEach((x) => { x.selectedIndex = 0; });
+    document.getElementById('sync-out').innerHTML = '';
   },
   'crm-import': () => {
     openModal(`<h2>Import leads form.xlsx</h2><p class="small muted">All 38 original columns are preserved. Duplicates by email are left for manual review, never merged.</p>

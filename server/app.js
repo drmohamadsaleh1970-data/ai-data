@@ -377,7 +377,8 @@ export function createApp(options = {}) {
   r.post('/owner/source/import', OWNER, requireRecentMfa, ok(async (req) => source.importRows({
     rows: await source.parseFile(req.body.file_base64, req.body.file_name), actor: req.user, mode: 'FILE', fileName: String(req.body.file_name || '').slice(0, 200),
   })));
-  r.post('/owner/source/sync', OWNER, requireRecentMfa, ok((req) => source.syncFromApi({ actor: req.user })));
+  r.post('/owner/source/sync/preview', OWNER, ok((req) => source.syncFromApi({ actor: req.user, filter: req.body?.filter, dryRun: true })));
+  r.post('/owner/source/sync', OWNER, requireRecentMfa, ok((req) => source.syncFromApi({ actor: req.user, filter: req.body?.filter, save: req.body?.save !== false })));
   r.get('/owner/provenance', OWNER, ok(() => owner.provenanceList()));
   r.post('/owner/provenance/:id/review', OWNER, requireRecentMfa, ok((req) => { owner.reviewProvenance({ actor: req.user, id: req.params.id, allowTransfer: req.body.allow_transfer === true }); return { ok: true }; }));
   r.post('/owner/investors/:id/suppress', OWNER, ok((req) => owner.suppressInvestor({ actor: req.user, investorId: req.params.id, reason: req.body.reason })));

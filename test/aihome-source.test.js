@@ -32,7 +32,11 @@ before(async () => {
     const page = Number(new URL(req.url, 'http://x').searchParams.get('page') || 1);
     const mk = (i) => ({ TransactionNumber: `API-${i}`, Country: 'UAE', City: 'Abu Dhabi', AreaNameEn: 'Api Island (TEST)', PropertyTypeEn: 'Townhouse', 'Client Role': i % 2 ? 'Buyer' : 'Seller', 'Client name': `Api Person ${i} (TEST)`, Registration_Date: `2024-0${(i % 9) + 1}-10`, 'Price/ProcedureValue': 2000000 + i, Mobile: `05080000${String(i).padStart(2, '0')}` });
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(page === 1 ? { rows: [1, 2, 3].map(mk), has_more: true } : { rows: [4, 5].map(mk), has_more: false }));
+    // Row 6 has no phone and no email: API sync must never import it.
+    // Row 7 is an Indian buyer in JVC (official name Al Barsha South Fourth) at AED 3.5M, email only.
+    const noContact = { ...mk(6), Mobile: '' };
+    const jvc = { ...mk(7), 'Client Role': 'Buyer', NATIONALITY: 'India', AreaNameEn: 'Al Barsha South Fourth', 'Price/ProcedureValue': 3500000, Mobile: '', Email: 'jvc.buyer@example.invalid' };
+    res.end(JSON.stringify(page === 1 ? { rows: [1, 2, 3].map(mk), has_more: true } : { rows: [...[4, 5].map(mk), noContact, jvc], has_more: false }));
   }).listen(0);
   await new Promise((r) => mock.once('listening', r));
   mockUrl = `http://127.0.0.1:${mock.address().port}/api/investor-history`;
@@ -142,9 +146,11 @@ test('API sync pulls all pages with the bearer token; NOT_CONNECTED when unset',
   process.env.AIHOME_SOURCE_TOKEN = API_TOKEN;
   const r = await o.post('/api/owner/source/sync');
   assert.equal(r.status, 200, JSON.stringify(r.data));
-  assert.equal(r.data.rows, 5);
-  assert.equal(r.data.transactions_created, 5);
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM investor_transaction WHERE source_txn_id LIKE 'AIH-API-%'").get().n, 5);
+  assert.equal(r.data.rows, 7);
+  assert.equal(r.data.transactions_created, 6);
+  assert.equal(r.data.skipped_no_contact, 1, 'a row with neither phone nor email is never imported');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM investor_transaction WHERE source_txn_id LIKE 'AIH-API-%'").get().n, 6);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM investor_transaction WHERE source_txn_id = 'AIH-API-6'").get().n, 0);
   assert.equal((await o.post('/api/owner/source/sync')).data.transactions_created, 0, 'idempotent by source transaction ID');
   const status = (await o.get('/api/owner/source')).data;
   assert.equal(status.api, 'CONNECTED');
@@ -175,4 +181,33 @@ test('owner deletes one import from the history or clears it; investor records s
   const d = client(srv.base);
   await d.login('director');
   assert.equal((await d.post('/api/owner/source/jobs/clear', { confirm: 'CLEAR IMPORT HISTORY' })).status, 403);
+});
+
+test('API sync filter: preview counts, saved filter, JVC alias, contact rule', async () => {
+  const o = client(srv.base);
+  await o.login('owner');
+  await o.mfa();
+  process.env.AIHOME_SOURCE_URL = mockUrl;
+  process.env.AIHOME_SOURCE_TOKEN = API_TOKEN;
+  const filter = { client_role: 'BUYER', nationalities: ['india'], areas: ['JVC'], min_price_aed: 3000000 };
+  const pv = (await o.post('/api/owner/source/sync/preview', { filter })).data;
+  assert.equal(pv.rows, 7);
+  assert.equal(pv.would_import, 1, JSON.stringify(pv));
+  assert.equal(pv.skipped_no_contact, 1);
+  assert.equal(pv.skipped_by_filter, 5);
+  assert.equal(pv.sample[0].nationality, 'India');
+  // Phone required drops the email-only JVC buyer too.
+  assert.equal((await o.post('/api/owner/source/sync/preview', { filter: { ...filter, contact: 'PHONE' } })).data.would_import, 0);
+
+  const r = await o.post('/api/owner/source/sync', { filter, save: true });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.skipped_by_filter, 5);
+  const st = (await o.get('/api/owner/source')).data;
+  assert.deepEqual(st.sync_filter.areas, ['jvc'], 'filter is saved for the next and scheduled syncs');
+  assert.equal(st.sync_filter.min_price_aed, 3000000);
+  assert.equal(st.jobs[0].rows_skipped_filter, 5);
+  assert.match(st.jobs[0].filter_text, /buyers/);
+  // Clear the saved filter so other tests are unaffected.
+  await o.post('/api/owner/source/sync', { filter: {}, save: true });
+  delete process.env.AIHOME_SOURCE_URL;
 });
