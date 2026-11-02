@@ -145,6 +145,7 @@ async function render() {
     if (!hasOrg && !['onboarding', 'owner', 'activate', 'settings', 'integrations', 'profile', 'guide', ...(isOwner() ? ['leadgen', 'live'] : [])].includes(name)) name = isFinance() ? 'owner' : 'onboarding';
     const html = await APP_ROUTES[name](parts.slice(1), query);
     app.innerHTML = shell(name, parts, html);
+    addPageLede(name, parts);
     afterRender();
   } catch (e) {
     console.error(e);
@@ -152,6 +153,17 @@ async function render() {
   }
 }
 window.addEventListener('hashchange', render);
+
+// One sentence under every page title saying what the page is for. Pages that already
+// explain their scope in the heading (the CRM dashboard) keep their own line.
+function addPageLede(name, parts) {
+  const head = document.querySelector('.page .page-head');
+  if (!head || head.querySelector('p') || (name === 'crm' && parts[1] === 'lead')) return;
+  const key = name === 'owner' ? `help_owner_${parts[1] || 'dashboard'}` : `help_${name.replace(/-/g, '_')}`;
+  const text = t(key);
+  if (text === key) return;
+  head.insertAdjacentHTML('afterend', `<p class="page-lede">${esc(text)}</p>`);
+}
 
 // ---------------------------------------------------------------------------------
 // Shell
@@ -178,39 +190,45 @@ function shell(name, parts, content) {
   const link = (href, key, ico, active) => `<a class="nav-link ${active ? 'active' : ''}" href="${href}"><span class="ico">${ico}</span>${esc(t(key))}</a>`;
   const m = state.me;
   const org = m.active_org;
-  let nav = link('#/guide', 'guide', '🧭', name === 'guide');
+  // The menu follows the job: start, find clients, work them, run the account.
+  const group = (key, items) => (items ? `<div class="nav-group">${esc(t(key))}</div>${items}` : '');
+  let nav = '';
   if (org) {
-    nav += `<div class="nav-group">${esc(org.name)}</div>`;
-    nav += link('#/overview', 'overview', '◎', name === 'overview');
-    if (can('crm.all') || can('crm.own')) nav += link('#/dashboard', 'crm_dashboard', '▦', name === 'dashboard');
-    if (can('cold.search')) nav += link('#/investor-history', 'investor_history', '❄', name === 'investor-history');
-    if (can('cold.search')) nav += link('#/my-cold', 'my_cold', '▤', name === 'my-cold');
-    if (can('hot.view')) nav += link('#/hot', 'hot_leads', '🔥', name === 'hot');
-    if (can('hot.view') && !isOwner()) nav += link('#/live', 'live_leads', '📡', name === 'live');
-    if (can('hot.view') && !isOwner()) nav += link('#/leadgen', 'lead_generation', '📣', name === 'leadgen');
-    if (can('crm.all') || can('crm.own')) nav += link('#/crm', 'crm', '☰', name === 'crm');
-    nav += link('#/team', 'team', '◉', name === 'team');
-    if (can('reports.view')) nav += link('#/reports', 'reports', '▲', name === 'reports');
-    nav += link('#/billing', 'billing', '◈', name === 'billing');
-    nav += link('#/integrations', 'integrations', '⇄', name === 'integrations');
-    nav += link('#/settings', 'settings', '⚙', name === 'settings');
+    nav += `<div class="nav-org">${esc(org.name)}<small>${esc(human(org.role))}</small></div>`;
+    nav += group('nav_start', link('#/overview', 'overview', '◎', name === 'overview') + link('#/guide', 'guide', '🧭', name === 'guide'));
+    let find = '';
+    if (can('cold.search')) find += link('#/investor-history', 'investor_history', '❄', name === 'investor-history');
+    if (can('hot.view')) find += link('#/hot', 'hot_leads', '🔥', name === 'hot');
+    if (can('hot.view') && !isOwner()) find += link('#/live', 'live_leads', '📡', name === 'live');
+    if (can('hot.view') && !isOwner()) find += link('#/leadgen', 'lead_generation', '📣', name === 'leadgen');
+    nav += group('nav_find', find);
+    let work = '';
+    if (can('crm.all') || can('crm.own')) work += link('#/crm', 'crm', '☰', name === 'crm');
+    if (can('crm.all') || can('crm.own')) work += link('#/dashboard', 'crm_dashboard', '▦', name === 'dashboard');
+    if (can('cold.search')) work += link('#/my-cold', 'my_cold', '▤', name === 'my-cold');
+    if (can('reports.view')) work += link('#/reports', 'reports', '▲', name === 'reports');
+    nav += group('nav_work', work);
+    nav += group('nav_account', link('#/team', 'team', '◉', name === 'team') + link('#/billing', 'billing', '◈', name === 'billing')
+      + link('#/integrations', 'integrations', '⇄', name === 'integrations') + link('#/settings', 'settings', '⚙', name === 'settings'));
+  } else {
+    nav += link('#/guide', 'guide', '🧭', name === 'guide');
   }
   if (isFinance()) {
     const sub = parts[1] || 'dashboard';
-    nav += `<div class="nav-group">${t('owner_console')}</div>`;
+    nav += `<div class="nav-group nav-console">${t('owner_console')}</div>`;
     const waiting = (m.approvals_waiting?.to_confirm || 0) + (m.approvals_waiting?.awaiting_activation || 0);
     const approvalsActive = name === 'owner' && (sub === 'approvals' || sub === 'finance');
-    nav += `<a class="nav-link ${approvalsActive ? 'active' : ''}" href="#/owner/approvals"><span class="ico">✓</span>Payment approvals${waiting ? ` <span class="badge ${m.approvals_waiting.to_confirm ? 'bad' : 'gold'}" style="margin-inline-start:auto" aria-label="${waiting} waiting">${waiting}</span>` : ''}</a>`;
     nav += link('#/owner', 'owner_dashboard', '◆', name === 'owner' && sub === 'dashboard');
+    nav += `<a class="nav-link ${approvalsActive ? 'active' : ''}" href="#/owner/approvals"><span class="ico">✓</span>Payment approvals${waiting ? ` <span class="badge ${m.approvals_waiting.to_confirm ? 'bad' : 'gold'}" style="margin-inline-start:auto" aria-label="${waiting} waiting">${waiting}</span>` : ''}</a>`;
     if (isOwner()) {
-      nav += link('#/owner/source', 'data_source', '⇩', name === 'owner' && sub === 'source');
-      nav += link('#/owner/crm', 'crm_monitor', '▦', name === 'owner' && sub === 'crm');
-      nav += link('#/owner/data', 'master_data', '⛁', name === 'owner' && sub === 'data');
-      nav += link('#/owner/hot', 'hot_admin', '🔥', name === 'owner' && sub === 'hot');
-      nav += link('#/live', 'live_leads', '📡', name === 'live');
-      nav += link('#/leadgen', 'lead_generation', '📣', name === 'leadgen');
-      nav += link('#/owner/governance', 'governance', '⚖', name === 'owner' && sub === 'governance');
-      nav += link('#/owner/audit', 'audit', '≣', name === 'owner' && sub === 'audit');
+      nav += group('nav_owner_data', link('#/owner/source', 'data_source', '⇩', name === 'owner' && sub === 'source')
+        + link('#/owner/data', 'master_data', '⛁', name === 'owner' && sub === 'data')
+        + link('#/owner/crm', 'crm_monitor', '▦', name === 'owner' && sub === 'crm')
+        + link('#/owner/hot', 'hot_admin', '🔥', name === 'owner' && sub === 'hot')
+        + link('#/live', 'live_leads', '📡', name === 'live')
+        + link('#/leadgen', 'lead_generation', '📣', name === 'leadgen'));
+      nav += group('nav_owner_control', link('#/owner/governance', 'governance', '⚖', name === 'owner' && sub === 'governance')
+        + link('#/owner/audit', 'audit', '≣', name === 'owner' && sub === 'audit'));
     }
     if (!org) nav += link('#/settings', 'settings', '⚙', name === 'settings');
   }
@@ -224,7 +242,7 @@ function shell(name, parts, content) {
   <div class="shell">
     <aside class="side">${logo(true)}${nav}
       <div class="spacer"></div>
-      <div class="small" style="padding:10px;color:#8193a8">${esc(m.user.name)}<br>${esc(m.user.email)}${m.user.platform_role ? `<br><span class="badge gold" style="margin-top:6px">${esc(human(m.user.platform_role))}</span>` : ''}${org ? `<br><span class="badge" style="margin-top:6px">${esc(human(org.role))}</span>` : ''}</div>
+      <a class="user-card" href="#/profile" style="text-decoration:none"><b>${esc(m.user.name)}</b><span>${esc(m.user.email)}</span>${m.user.platform_role ? `<span><span class="badge gold">${esc(human(m.user.platform_role))}</span></span>` : ''}</a>
     </aside>
     <div class="main">
       <header class="top">
@@ -336,47 +354,74 @@ async function viewSignIn() {
   const chosen = SIGNIN_ROLES.find(([k]) => k === role);
   const profile = signupProfile();
   const returning = state.signinReturning === true;
-  const ready = !!role && (pendingActivation || returning || !!profile);
+  // Google opens once we know enough to set up the account: a returning user needs nothing.
+  const ready = !!pendingActivation || returning || (!!role && !!profile);
   const inApp = inAppBrowser();
   const inAppNote = inApp ? `<div class="banner warn" data-test="inapp-warning" style="flex-direction:column;gap:8px">
       <span>You opened this page inside ${esc(inApp)}. Google does not allow sign-in here.</span>
       <span style="font-weight:500">Tap the ⋮ or share menu and choose <b>Open in Chrome</b> / <b>Open in Safari</b>, or copy the link and paste it into your browser.</span>
       <button type="button" class="btn sm" data-act="copy-signin-link">Copy link</button></div>` : '';
   const google = c.google_client_id ? `${inAppNote}<div id="gsi-btn" style="min-height:44px;max-width:100%;overflow:hidden"></div>` : `<button class="btn block" disabled>G&nbsp; ${t('continue_google')}</button><div class="banner warn">Google sign-in is <b>${t('not_connected')}</b> on this deployment. Set GOOGLE_CLIENT_ID.</div>`;
-  const step = (n, title, done) => `<div class="row"><span class="badge ${done ? 'ok' : 'gold'}">${done ? '✓' : n}</span><h3 style="margin:0">${title}</h3></div>`;
 
-  const roleCard = pendingActivation ? '' : `<div class="card grid">${step(1, 'Choose your account type', !!role)}
-      ${SIGNIN_ROLES.map(([k, n, d]) => `<button class="persona" data-act="pick-role" data-role="${k}" ${k === role ? 'style="border:2px solid var(--gold)" aria-pressed="true"' : 'aria-pressed="false"'}><span class="avatar">${k === role ? '✓' : n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`).join('')}</div>`;
+  // Which step is in focus: 1 account type, 2 details, 3 Google.
+  const current = ready ? 3 : role ? 2 : 1;
+  const customer = SIGNIN_ROLES.filter(([k]) => !['owner', 'finance'].includes(k));
+  const staff = SIGNIN_ROLES.filter(([k]) => ['owner', 'finance'].includes(k));
+  const persona = ([k, n, d]) => `<button class="persona" data-act="pick-role" data-role="${k}" aria-pressed="${k === role}"><span class="avatar">${k === role ? '✓' : n[0]}</span><span><b>${n}</b><br><span class="small muted">${d}</span></span></button>`;
 
-  let details = '';
-  if (role && !pendingActivation) {
-    details = profile && !returning
-      ? `<div class="card grid">${step(2, 'Your details', true)}
-          <div class="kv"><span class="k">Full name</span><span class="v">${esc(profile.full_name)}</span><span class="k">Mobile</span><span class="v mono">${esc(profile.phone)}</span><span class="k">Email</span><span class="v">${esc(profile.email)}</span>${profile.agency_name ? `<span class="k">Agency</span><span class="v"><b>${esc(profile.agency_name)}</b></span>` : ''}</div>
-          <button class="btn sm ghost" data-act="signup-edit" style="justify-self:start">Edit details</button></div>`
-      : returning
-        ? `<div class="card grid">${step(2, 'Welcome back', true)}<p class="small muted" style="margin:0">Sign in with the Google account you registered with. <a href="#" data-act="signup-new">New here? Enter your details</a></p></div>`
-        : `<form class="card grid" data-form="signup-profile" style="gap:12px">${step(2, 'Your details', false)}
-            <p class="small muted" style="margin:0">${esc(ROLE_HINTS[role] || '')}</p>
-            <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" placeholder="e.g. Sara Al Mansouri"></label>
-            <label class="field">Mobile number<input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="+971 50 123 4567"></label>
-            <label class="field">Email<input type="email" name="email" required autocomplete="email" placeholder="name@company.com"><span class="small muted">Must be the email of the Google account you will sign in with.</span></label>
-            ${role === 'member' ? agencyField() : ''}
-            <div class="row"><button class="btn primary">Continue</button><a href="#" class="small" data-act="signup-returning">I already have an account</a></div>
-          </form>`;
+  let panel;
+  if (pendingActivation) {
+    panel = `<div class="banner ok">Sign in with the Google account your activation email was sent to.</div>${google}`;
+  } else if (current === 1) {
+    panel = `<h2>Who are you signing in as?</h2>
+      <p class="muted" style="margin:0">This decides how your new account is set up. You can only have one.</p>
+      <div class="grid" style="gap:8px">${customer.map(persona).join('')}</div>
+      <details class="staff"><summary>AI-DATA staff</summary><div class="grid" style="gap:8px;margin-top:8px">${staff.map(persona).join('')}</div></details>
+      <p class="signin-alt">Already have an account? <a href="#" data-act="signup-returning">Sign in with Google</a></p>`;
+  } else if (current === 2) {
+    panel = `<form class="grid" data-form="signup-profile" style="gap:14px">
+        <h2>Your details</h2>
+        <p class="muted" style="margin:0">${esc(ROLE_HINTS[role] || '')}</p>
+        <label class="field">Full name<input type="text" name="full_name" required minlength="2" maxlength="120" autocomplete="name" placeholder="e.g. Sara Al Mansouri"></label>
+        <label class="field">Mobile number<input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="+971 50 123 4567"></label>
+        <label class="field">Email<input type="email" name="email" required autocomplete="email" placeholder="name@company.com"><span class="small muted">Use the email of the Google account you will sign in with.</span></label>
+        ${role === 'member' ? agencyField() : ''}
+        <div class="row" style="gap:16px"><button class="btn primary">Continue</button><a href="#" class="small" data-act="signup-returning">I already have an account</a></div>
+      </form>`;
+  } else {
+    panel = `<h2>${returning ? 'Welcome back' : 'Confirm with Google'}</h2>
+      ${returning
+        ? `<p class="muted" style="margin:0">Sign in with the Google account you registered with.</p>`
+        : `<div class="kv"><span class="k">Account type</span><span class="v">${esc(chosen?.[1] || '')}</span><span class="k">Full name</span><span class="v">${esc(profile.full_name)}</span><span class="k">Mobile</span><span class="v mono">${esc(profile.phone)}</span><span class="k">Email</span><span class="v">${esc(profile.email)}</span>${profile.agency_name ? `<span class="k">Agency</span><span class="v"><b>${esc(profile.agency_name)}</b></span>` : ''}</div>`}
+      ${google}
+      <p class="small muted" style="margin:0">${returning ? '<a href="#" data-act="signup-new">New here? Create an account</a>' : '<a href="#" data-act="signup-edit">Edit details</a>'}</p>`;
   }
 
-  return `<div class="auth-wrap"><div class="auth-card">
-    <div style="text-align:center">${logo()}</div>
-    ${roleCard}${details}
-    <div class="card grid">
-      ${pendingActivation ? `<h2 style="margin:0">${t('sign_in')}</h2>` : step(3, `${t('sign_in')} with Google${chosen ? ` · ${esc(chosen[1])}` : ''}`, false)}
-      ${pendingActivation ? `<div class="banner ok">Sign in with the Google account your activation email was sent to.</div>` : ''}
-      ${ready ? google : `<p class="muted" style="margin:0">${role ? 'Enter your details above, then continue with Google.' : 'Choose your account type above.'}</p>`}
-      <p class="small muted">We only use your Google identity (name, email, account ID) to sign you in. We never request access to your inbox.</p>
-    </div>
-    <a href="#/" class="small muted" style="text-align:center">← AI-DATA</a>
-  </div></div>`;
+  const railStep = (n, title, note) => {
+    const cls = n < current ? 'done' : n === current ? 'on' : '';
+    return `<li class="rail-step ${cls}" ${n === current ? 'aria-current="step"' : ''}><span class="rail-dot">${n < current ? '✓' : n}</span><span><b>${title}</b>${note ? `<br><span class="rail-note">${note}</span>` : ''}</span></li>`;
+  };
+  const roleNote = chosen ? `${esc(chosen[1])} · <a href="#" data-act="signin-restart">change</a>` : 'Agency, solo agent or agent in an agency';
+  const detailNote = returning ? 'Not needed, you are registered' : profile && role ? esc(profile.full_name) : 'Name, mobile and email';
+  const rail = pendingActivation
+    ? `<p class="rail-lede">You have an activation link. Sign in to apply it to your account.</p>`
+    : `<ol class="rail">${railStep(1, 'Account type', returning ? 'Not needed, you are registered' : roleNote)}${railStep(2, 'Your details', detailNote)}${railStep(3, 'Sign in with Google', 'Proves it is you. We never see your inbox.')}</ol>`;
+
+  return `<div class="signin">
+    <aside class="signin-side">
+      ${logo(true)}
+      <h1>${t('sign_in')}</h1>
+      ${rail}
+      <p class="small signin-privacy">We use your Google name, email and account ID only to sign you in.</p>
+    </aside>
+    <main class="signin-main">
+      <div class="signin-panel grid" style="gap:14px">
+        ${pendingActivation ? '' : `<div class="small muted">Step ${current} of 3</div>`}
+        ${panel}
+      </div>
+      <a href="#/" class="small muted signin-back">← Back to the AI-DATA home page</a>
+    </main>
+  </div>`;
 }
 
 // Google blocks sign-in inside apps' built-in browsers (error 403 disallowed_useragent).
@@ -516,7 +561,18 @@ async function viewOverview() {
   const overdue = tasks.filter((x) => new Date(x.due_at) < new Date());
   const newLeads = leads.filter((l) => l.stage === 'NEW');
   const cold = e.cold;
+  const left = cold.quota?.remaining;
+  const [nextTitle, nextText, nextHref, nextLabel] = !cold.active
+    ? ['Switch on data access', 'Your account has no active plan yet. Pay for a plan and investor records become available the same day.', '#/billing', 'Go to billing']
+    : overdue.length
+      ? [`${plural(overdue.length, 'follow-up is', 'follow-ups are')} overdue`, 'Clients you promised to contact are waiting. Clear these first.', '#/crm?view=tasks', 'Open my day']
+      : newLeads.length
+        ? [`${plural(newLeads.length, 'new lead is', 'new leads are')} waiting for a first call`, 'Fast first contact wins most deals. Open each one, call, and log what happened.', '#/crm?stage=NEW', 'See new leads']
+        : can('cold.search') && left
+          ? ['Find investors to call', `You can still move ${fmtNum(left)} investor records into your CRM today. Searching is free.`, '#/investor-history', 'Search investors']
+          : ['Work your pipeline', 'Nothing urgent. Move your open leads forward, one stage at a time.', '#/crm?view=pipeline', 'Open pipeline'];
   return `<div class="page-head"><div><div class="kicker">${esc(state.me.active_org.name)}</div><h1>${t('overview')}</h1></div></div>
+  <div class="card next-step"><div><div class="small muted">${t('next_step')}</div><h2>${esc(nextTitle)}</h2><p class="muted">${esc(nextText)}</p></div><a class="btn primary" href="${nextHref}">${esc(nextLabel)}</a></div>
   <div class="grid g4">
     <div class="card"><div class="stat"><span class="l">${t('plan')}</span><span class="v" style="font-size:22px">${cold.active ? esc(cold.plan_name) : '—'}</span></div>
       <div class="small muted" style="margin-top:6px">${cold.active ? `${t('renews')}: ${fmtDate(cold.period_end)} · ${esc(human(cold.provider))}` : esc(human(cold.latest?.status || 'NO_SUBSCRIPTION'))}</div></div>
@@ -526,7 +582,7 @@ async function viewOverview() {
   <div class="grid g2" style="margin-top:16px">
     <div class="card"><h3>${t('my_tasks')} <span class="badge ${overdue.length ? 'bad' : 'ok'}">${overdue.length} ${t('overdue')}</span></h3>
       ${tasks.length ? `<div class="table-wrap"><table><tbody>${tasks.slice(0, 8).map((x) => `<tr class="click" data-href="#/crm/lead/${x.lead_id}"><td>${srcBadge(x.source_type)}</td><td><b>${esc(x.full_name)}</b><br><span class="small muted">${esc(x.title)}</span></td><td class="num ${new Date(x.due_at) < new Date() ? '' : 'muted'}" style="${new Date(x.due_at) < new Date() ? 'color:var(--bad);font-weight:700' : ''}">${fmtDT(x.due_at)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty">✓</div>`}</div>
-    <div class="card"><h3>${t('get_started')}</h3>
+    <div class="card"><h3>${t('how_it_works')}</h3>
       <div class="row" style="margin-bottom:8px"><span class="badge cold">❄ Cold</span></div>
       <div class="steps"><a class="step" href="#/investor-history">${t('step_search')}</a><a class="step" href="#/investor-history">${t('step_transfer')}</a><a class="step" href="#/crm">${t('step_follow')}</a></div>
       <div class="row" style="margin:14px 0 8px"><span class="badge hot">🔥 Hot</span></div>
@@ -1614,7 +1670,7 @@ const actions = {
       await POST('/api/me/active-org', { org_id: Number(org) }); go('#/crm');
     } catch (e) { toast(errMsg(e), true); }
   },
-  'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); render(); },
+  'pick-role': (el) => { safeSet('aih_signin_role', el.dataset.role); state.signinReturning = false; render(); },
   'join-refresh': async () => { await loadMe(); if (state.me.active_org) { toast('Approved ✓ Welcome to your agency.'); go('#/overview'); } else { toast('Still waiting for approval.'); render(); } },
   'join-cancel': async (el) => { if (confirm('Cancel your request to join this agency?')) { await api('DELETE', `/api/me/join-requests/${el.dataset.id}`); await loadMe(); render(); } },
   'join-decline': async (el) => { if (confirm('Decline this request?')) { await POST(`/api/org/join-requests/${el.dataset.id}`, { approve: false }); toast('Declined'); await loadMe(); render(); } },
@@ -1636,6 +1692,7 @@ const actions = {
     run: (confirm) => POST('/api/owner/investors/delete-all', { confirm }) }),
   'signup-edit': () => { setSignupProfile(null); state.signinReturning = false; render(); },
   'signup-returning': () => { state.signinReturning = true; render(); },
+  'signin-restart': () => { safeSet('aih_signin_role', ''); setSignupProfile(null); state.signinReturning = false; render(); },
   'signup-new': () => { state.signinReturning = false; render(); },
   'copy-signin-link': async () => {
     const link = location.origin + '/#/signin';
