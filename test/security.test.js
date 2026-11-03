@@ -37,6 +37,13 @@ test('finance admin cannot export; owner export needs fresh MFA and yields a wat
   assert.equal(noMfa.data.error, 'MFA_REQUIRED');
   assert.equal((await o.post('/api/me/mfa/verify', { code: '000000' })).status, 401);
   await o.mfa();
+  // Export is switched off by default: refused (and audited) until the owner turns it on.
+  assert.equal((await o.get('/api/owner/export-status')).data.enabled, false);
+  const off = await o.post('/api/owner/cold-exports', { filter: { city: ['Dubai'] } });
+  assert.equal(off.status, 403);
+  assert.equal(off.data.error, 'EXPORT_SWITCHED_OFF');
+  assert.equal((await o.post('/api/owner/flags', { key: 'OWNER_COLD_EXPORT', enabled: true })).status, 200);
+  assert.equal((await o.get('/api/owner/export-status')).data.enabled, true);
   const job = await o.post('/api/owner/cold-exports', { filter: { city: ['Dubai'] }, fields: ['investor_id', 'full_name', 'email', 'phone', 'area', 'price_aed'] });
   assert.equal(job.status, 200);
   assert.ok(job.data.rows > 0);
@@ -49,6 +56,10 @@ test('finance admin cannot export; owner export needs fresh MFA and yields a wat
   assert.deepEqual(ws.getRow(2).values.slice(1), ['investor_id', 'full_name', 'email', 'phone', 'area', 'price_aed']);
   assert.equal(ws.rowCount - 2, job.data.rows);
   assert.ok(wb.getWorksheet('Manifest'));
+  // Switching it off again also blocks downloading an export that was already made.
+  assert.equal((await o.post('/api/owner/flags', { key: 'OWNER_COLD_EXPORT', enabled: false })).status, 200);
+  const late = await o.get(`/api/owner/cold-exports/${job.data.job_id}`);
+  assert.equal(late.status, 403);
   const audit = await o.get('/api/owner/audit?action=OWNER_XLSX_EXPORT');
   assert.equal(audit.data.length, 1);
   const denied = await o.get('/api/owner/audit?action=RAW_EXPORT_DENIED');

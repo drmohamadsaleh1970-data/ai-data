@@ -243,7 +243,9 @@ function provenanceId(conn) {
 }
 
 export function preview(rows) {
-  const headers = rows.length ? Object.keys(rows[0]) : [];
+  // Every column seen in any row. JSON feeds often omit empty fields, so the first row alone
+  // can lack e.g. Email - which used to drop every email in the whole feed.
+  const headers = [...new Set(rows.flatMap((r) => (r && typeof r === 'object' ? Object.keys(r) : [])))];
   const map = mapHeaders(headers);
   const parsed = rows.map((raw, i) => ({ row: i + 1, ...normalizeRow(raw, map.mapping) }));
   return {
@@ -254,6 +256,135 @@ export function preview(rows) {
     sample_errors: parsed.filter((p) => p.errors.length).slice(0, 10).map((p) => ({ row: p.row, errors: p.errors })),
     parsed,
   };
+}
+
+// Writes the kept records in a handful of round trips instead of several per row, so a
+// large sync finishes well inside the serverless time limit. Matching rules are the same as
+// before: a known source transaction ID updates that transaction; otherwise an exact phone,
+// then an exact email, links the row to an existing person; names alone never merge.
+const CHUNK = 400;
+const chunks = (arr, n = CHUNK) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+const marks = (n) => Array(n).fill('?').join(',');
+const TXN_COLS = ['client_role', 'country', 'city', 'area', 'property_type', 'master_developer', 'project', 'size_m2', 'price_aed', 'registration_date'];
+
+function writeRecords(conn, records) {
+  const prov = provenanceId(conn);
+  const ts = iso();
+  const s = { investors_created: 0, transactions_created: 0, transactions_updated: 0 };
+  if (!records.length) return s;
+
+  // 1. Look up everything the rows could match, in bulk.
+  const existingTxn = new Map();
+  for (const ids of chunks([...new Set(records.map((r) => r.source_txn_id))])) {
+    for (const t of conn.prepare(`SELECT id, investor_id, source_txn_id, ${TXN_COLS.join(', ')} FROM investor_transaction WHERE source_txn_id IN (${marks(ids.length)})`).all(...ids)) existingTxn.set(t.source_txn_id, t);
+  }
+  const contacts = new Map(); // id -> { id, email, phone, nationality, changed }
+  const byPhone = new Map();
+  const byEmail = new Map();
+  const remember = (c) => { contacts.set(c.id, c); if (c.phone && !byPhone.has(c.phone)) byPhone.set(c.phone, c); if (c.email && !byEmail.has(c.email.toLowerCase())) byEmail.set(c.email.toLowerCase(), c); };
+  const load = (sql, values) => { for (const v of chunks(values)) for (const c of conn.prepare(sql.replace('%', marks(v.length))).all(prov, ...v)) remember({ ...c, id: Number(c.id) }); };
+  const cols = 'SELECT id, email, phone, nationality FROM investor_contact WHERE provenance_id = ? AND';
+  for (const v of chunks([...new Set([...existingTxn.values()].map((t) => Number(t.investor_id)))])) {
+    for (const c of conn.prepare(`SELECT id, email, phone, nationality FROM investor_contact WHERE id IN (${marks(v.length)})`).all(...v)) remember({ ...c, id: Number(c.id) });
+  }
+  load(`${cols} phone IN (%)`, [...new Set(records.map((r) => r.phone).filter(Boolean))]);
+  load(`${cols} lower(email) IN (%)`, [...new Set(records.map((r) => r.email).filter(Boolean))]);
+  const nameCount = new Map();
+  for (const names of chunks([...new Set(records.map((r) => r.full_name.toLowerCase()))])) {
+    for (const x of conn.prepare(`SELECT lower(full_name) AS n, COUNT(*) AS c FROM investor_contact WHERE provenance_id = ? AND lower(full_name) IN (${marks(names.length)}) GROUP BY lower(full_name)`).all(prov, ...names)) nameCount.set(x.n, Number(x.c));
+  }
+
+  // 2. Resolve each row to a person in memory; new people are created once, below.
+  const fresh = []; // new contacts, in order
+  const newTxns = [];
+  const updTxns = [];
+  const ambiguousNames = new Set();
+  const seenTxn = new Map(); // source_txn_id repeated inside one batch -> last row wins
+  for (const r of records) {
+    const known = existingTxn.get(r.source_txn_id) || seenTxn.get(r.source_txn_id);
+    let person = known && (contacts.get(Number(known.investor_id)) || known.person);
+    if (!person) person = (r.phone && byPhone.get(r.phone)) || (r.email && byEmail.get(r.email)) || null;
+    if (!person) {
+      person = { fresh: true, full_name: r.full_name, email: r.email, phone: r.phone, nationality: r.nationality };
+      fresh.push(person);
+      s.investors_created++;
+      const n = r.full_name.toLowerCase();
+      nameCount.set(n, (nameCount.get(n) || 0) + 1);
+      if (nameCount.get(n) > 1) ambiguousNames.add(n);
+    } else {
+      // Fill gaps only; never touch rights, suppression or marketing permission.
+      for (const k of ['email', 'phone', 'nationality']) if (!person[k] && r[k]) { person[k] = r[k]; person.changed = true; }
+    }
+    if (person.phone && !byPhone.has(person.phone)) byPhone.set(person.phone, person);
+    if (person.email && !byEmail.has(person.email.toLowerCase())) byEmail.set(person.email.toLowerCase(), person);
+    const vals = TXN_COLS.map((c) => r[c]);
+    if (known?.pendingRow) { known.pendingRow.vals = vals; s.transactions_updated++; }
+    else if (known) {
+      s.transactions_updated++;
+      // Unchanged transactions need no write, so re-syncing the same feed is cheap.
+      const same = TXN_COLS.every((c, i) => String(known[c] ?? '') === String(vals[i] ?? '') || (known[c] != null && vals[i] != null && Number(known[c]) === Number(vals[i])));
+      if (!same) updTxns.push({ id: known.id, vals });
+    }
+    else {
+      const row = { person, source_txn_id: r.source_txn_id, vals };
+      newTxns.push(row);
+      seenTxn.set(r.source_txn_id, { person, pendingRow: row });
+      s.transactions_created++;
+    }
+  }
+
+  // 3. Write: new people (ids matched back by their own values), gap fills, transactions.
+  for (const group of chunks(fresh, 200)) {
+    const sql = `INSERT INTO investor_contact (full_name, email, phone, nationality, rights_status, marketing_permission, identity_confidence, provenance_id, updated_at)
+      VALUES ${group.map(() => "(?,?,?,?,'RESTRICTED_PENDING_REVIEW','UNKNOWN','CONFIRMED',?,?)").join(',')} RETURNING id, full_name, email, phone, nationality`;
+    const got = conn.prepare(sql).all(...group.flatMap((c) => [c.full_name, c.email, c.phone, c.nationality, prov, ts]));
+    const sig = (c) => JSON.stringify([c.full_name, c.email ?? null, c.phone ?? null, c.nationality ?? null]);
+    const pool = new Map();
+    for (const g of got) { const k = sig(g); if (!pool.has(k)) pool.set(k, []); pool.get(k).push(Number(g.id)); }
+    for (const c of group) {
+      const id = pool.get(sig(c))?.shift();
+      if (id == null) throw new HttpError(500, 'IMPORT_ID_MISMATCH', 'Could not match new investor records to their IDs.');
+      c.id = id;
+    }
+  }
+  for (const c of contacts.values()) {
+    if (c.changed) conn.prepare('UPDATE investor_contact SET email = COALESCE(email, ?), phone = COALESCE(phone, ?), nationality = COALESCE(nationality, ?), updated_at = ? WHERE id = ?').run(c.email, c.phone, c.nationality, ts, c.id);
+  }
+  for (const group of chunks(newTxns, 200)) {
+    conn.prepare(`INSERT INTO investor_transaction (investor_id, source_txn_id, ${TXN_COLS.join(', ')}, provenance_id)
+      VALUES ${group.map(() => `(${marks(TXN_COLS.length + 3)})`).join(',')}`).run(...group.flatMap((t) => [t.person.id, t.source_txn_id, ...t.vals, prov]));
+  }
+  const setCols = TXN_COLS.map((c) => `${c}=?`).join(', ');
+  for (const t of updTxns) conn.prepare(`UPDATE investor_transaction SET ${setCols} WHERE id = ?`).run(...t.vals, t.id);
+  for (const names of chunks([...ambiguousNames])) {
+    conn.prepare(`UPDATE investor_contact SET identity_confidence = 'AMBIGUOUS' WHERE provenance_id = ? AND phone IS NULL AND email IS NULL AND lower(full_name) IN (${marks(names.length)})`).run(prov, ...names);
+  }
+  return s;
+}
+
+// Most common values in the feed, so a warning can show what the source actually contains.
+export function feedValues(parsed, max = 8) {
+  const top = (key) => {
+    const n = new Map();
+    for (const { record: r, errors } of parsed) if (!errors.length && r[key] && r[key] !== 'Unknown') n.set(r[key], (n.get(r[key]) || 0) + 1);
+    return [...n.entries()].sort((a, b) => b[1] - a[1]).slice(0, max).map(([value, rows]) => ({ value, rows }));
+  };
+  return { areas: top('area'), nationalities: top('nationality'), property_types: top('property_type') };
+}
+
+// A run that read rows but stored none is almost always a filter that matches nothing in the
+// feed. Say so plainly, with the reason that removed the most rows.
+export function nothingImportedWarning(r, parsed) {
+  const kept = (r.transactions_created ?? r.would_import ?? 0) + (r.transactions_updated ?? 0);
+  if (!r.rows || kept > 0) return null;
+  const reasons = Object.entries(r.skipped_reasons || {}).sort((a, b) => b[1] - a[1]);
+  const lead = r.would_import === undefined ? 'Nothing was imported' : 'Nothing would be imported';
+  const label = { role: 'buyer/seller', nationality: 'nationality', area: 'area', property_type: 'property type', price: 'price', date: 'registration date' };
+  let message;
+  if (r.skipped_by_filter) message = `${lead}: your filter left out all ${r.skipped_by_filter.toLocaleString('en')} rows that had contact details${reasons.length ? ` (mostly by ${label[reasons[0][0]] || reasons[0][0]})` : ''}. Widen or clear the filter and run Preview count.`;
+  else if (r.skipped_no_contact) message = `${lead}: none of the ${r.rows.toLocaleString('en')} rows has the contact details the filter requires.`;
+  else message = `${lead}: all ${r.rows.toLocaleString('en')} rows were unreadable.`;
+  return { message, feed: feedValues(parsed) };
 }
 
 export function importRows({ rows, actor, mode, fileName, filter = null, requireContact = false }) {
@@ -272,54 +403,16 @@ export function importRows({ rows, actor, mode, fileName, filter = null, require
   const db = getDb();
   const jobId = Number(db.prepare("INSERT INTO source_import_job (source, mode, file_name, started_by, started_at, status, rows_read) VALUES (?,?,?,?,?,'RUNNING',?)")
     .run(SOURCE_NAME, mode, fileName ?? null, actor?.id ?? null, iso(), rows.length).lastInsertRowid);
-  const stats = tx((conn) => {
-    const prov = provenanceId(conn);
-    const ts = iso();
-    const s = { investors_created: 0, transactions_created: 0, transactions_updated: 0 };
-    const ambiguousNames = new Set();
-    for (const { record: r, errors, skip } of pv.parsed) {
-      if (errors.length || skip) continue;
-      const existingTxn = conn.prepare('SELECT id, investor_id FROM investor_transaction WHERE source_txn_id = ?').get(r.source_txn_id);
-      let investorId = existingTxn?.investor_id;
-      if (!investorId) {
-        // Identity: only an exact phone or email links rows to one person. Names alone
-        // never merge; same-name records are flagged AMBIGUOUS for manual review.
-        const match = (r.phone && conn.prepare('SELECT id FROM investor_contact WHERE phone = ? AND provenance_id = ?').get(r.phone, prov))
-          || (r.email && conn.prepare('SELECT id FROM investor_contact WHERE lower(email) = ? AND provenance_id = ?').get(r.email, prov));
-        if (match) investorId = match.id;
-        else {
-          investorId = Number(conn.prepare(`INSERT INTO investor_contact (full_name, email, phone, nationality, rights_status, marketing_permission, identity_confidence, provenance_id, updated_at)
-            VALUES (?,?,?,?,'RESTRICTED_PENDING_REVIEW','UNKNOWN','CONFIRMED',?,?)`).run(r.full_name, r.email, r.phone, r.nationality, prov, ts).lastInsertRowid);
-          s.investors_created++;
-          const sameName = conn.prepare('SELECT COUNT(*) AS n FROM investor_contact WHERE lower(full_name) = lower(?) AND provenance_id = ?').get(r.full_name, prov).n;
-          if (sameName > 1) ambiguousNames.add(r.full_name.toLowerCase());
-        }
-      }
-      // Fill gaps only; never touch rights, suppression or marketing permission.
-      conn.prepare('UPDATE investor_contact SET email = COALESCE(email, ?), phone = COALESCE(phone, ?), nationality = COALESCE(nationality, ?), updated_at = ? WHERE id = ?')
-        .run(r.email, r.phone, r.nationality, ts, investorId);
-      const vals = [r.client_role, r.country, r.city, r.area, r.property_type, r.master_developer, r.project, r.size_m2, r.price_aed, r.registration_date];
-      if (existingTxn) {
-        conn.prepare(`UPDATE investor_transaction SET client_role=?, country=?, city=?, area=?, property_type=?, master_developer=?, project=?, size_m2=?, price_aed=?, registration_date=? WHERE id = ?`).run(...vals, existingTxn.id);
-        s.transactions_updated++;
-      } else {
-        conn.prepare(`INSERT INTO investor_transaction (investor_id, source_txn_id, client_role, country, city, area, property_type, master_developer, project, size_m2, price_aed, registration_date, provenance_id)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(investorId, r.source_txn_id, ...vals, prov);
-        s.transactions_created++;
-      }
-    }
-    for (const n of ambiguousNames) {
-      conn.prepare("UPDATE investor_contact SET identity_confidence = 'AMBIGUOUS' WHERE lower(full_name) = ? AND provenance_id = ? AND phone IS NULL AND email IS NULL").run(n, prov);
-    }
-    return s;
-  });
+  const stats = tx((conn) => writeRecords(conn, pv.parsed.filter((p) => !p.errors.length && !p.skip).map((p) => p.record)));
   const filterText = f || requireContact ? describeFilter(f || normalizeFilter()) : null;
   db.prepare(`UPDATE source_import_job SET finished_at = ?, status = 'COMPLETED', investors_created = ?, transactions_created = ?, transactions_updated = ?, rows_rejected = ?, errors_json = ?,
       rows_skipped_no_contact = ?, rows_skipped_filter = ?, filter_text = ? WHERE id = ?`)
     .run(iso(), stats.investors_created, stats.transactions_created, stats.transactions_updated, pv.rejected, JSON.stringify(pv.sample_errors),
       skipped.no_contact, skipped.by_filter, filterText, jobId);
   audit({ actor: actor?.id, action: 'AIHOME_SOURCE_IMPORT', target: `import:${jobId}`, meta: { mode, fileName, rows: rows.length, ...stats, rejected: pv.rejected, skipped_no_contact: skipped.no_contact, skipped_by_filter: skipped.by_filter, filter: filterText } });
-  return { job_id: jobId, rows: rows.length, rejected: pv.rejected, ...stats, skipped_no_contact: skipped.no_contact, skipped_by_filter: skipped.by_filter, skipped_reasons: skipped.reasons, filter: filterText, sample_errors: pv.sample_errors };
+  const out = { job_id: jobId, rows: rows.length, rejected: pv.rejected, ...stats, skipped_no_contact: skipped.no_contact, skipped_by_filter: skipped.by_filter, skipped_reasons: skipped.reasons, filter: filterText, sample_errors: pv.sample_errors };
+  out.warning = nothingImportedWarning(out, pv.parsed);
+  return out;
 }
 
 // --- API pull ----------------------------------------------------------------------
@@ -409,6 +502,7 @@ export async function syncFromApi({ actor, filter, save = false, dryRun = false 
         out.sample.push({ name: r.full_name, role: r.client_role, nationality: r.nationality, area: r.area, project: r.project, price_aed: r.price_aed, date: r.registration_date, has_phone: !!r.phone, has_email: !!r.email });
       }
     }
+    out.warning = nothingImportedWarning(out, pv.parsed);
     return out;
   }
   return importRows({ rows, actor, mode: 'API', filter: f, requireContact: true });

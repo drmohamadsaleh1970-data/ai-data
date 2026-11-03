@@ -2,7 +2,7 @@ import ExcelJS from 'exceljs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb, tx } from './db.js';
-import { HttpError, iso, audit, randomToken, dubaiDay } from './util.js';
+import { HttpError, iso, audit, randomToken, dubaiDay, flag } from './util.js';
 import { parseFilter } from './cold.js';
 import { activeSubscription } from './entitlements.js';
 
@@ -16,7 +16,17 @@ export const EXPORT_FIELDS = {
 
 // Owner-only XLSX export. Streams rows to disk with exceljs' streaming writer so large
 // exports don't load into memory, and stamps a watermark + manifest sheet.
+// Owner exports of personal data are switched off unless the OWNER_COLD_EXPORT flag is on
+// (Owner console -> Rights & governance). Refusals are audited like other blocked exports.
+export const EXPORT_FLAG = 'OWNER_COLD_EXPORT';
+function requireExportSwitch(user, target) {
+  if (flag(EXPORT_FLAG)) return;
+  audit({ actor: user?.id, action: 'RAW_EXPORT_DENIED', target, meta: { reason: 'OWNER_COLD_EXPORT is off' } });
+  throw new HttpError(403, 'EXPORT_SWITCHED_OFF', 'Exporting investor data is switched off. Turn on OWNER_COLD_EXPORT in Owner console → Rights & governance to export.');
+}
+
 export async function createOwnerExport({ user, filter, fields }) {
+  requireExportSwitch(user, 'owner-export');
   const f = parseFilter(filter);
   const cols = (Array.isArray(fields) && fields.length ? fields : Object.keys(EXPORT_FIELDS)).filter((k) => EXPORT_FIELDS[k]);
   if (!cols.length) throw new HttpError(400, 'NO_FIELDS');
@@ -54,6 +64,7 @@ export async function createOwnerExport({ user, filter, fields }) {
 }
 
 export function exportFile(jobId, user) {
+  requireExportSwitch(user, `export:${Number(jobId)}`);
   const job = getDb().prepare('SELECT * FROM owner_export_job WHERE id = ?').get(Number(jobId));
   if (!job || job.status !== 'COMPLETED') throw new HttpError(404, 'NOT_FOUND');
   audit({ actor: user.id, action: 'OWNER_XLSX_DOWNLOAD', target: `export:${job.id}` });
@@ -128,7 +139,7 @@ export function suppressInvestor({ actor, investorId, reason }) {
 }
 
 export function setFlag({ actor, key, enabled }) {
-  const allowed = ['COLD_SUBSCRIBER_TRANSFER', 'HOT_AUTO_DISTRIBUTE'];
+  const allowed = ['COLD_SUBSCRIBER_TRANSFER', 'HOT_AUTO_DISTRIBUTE', 'OWNER_COLD_EXPORT'];
   if (!allowed.includes(key)) throw new HttpError(400, 'UNKNOWN_FLAG');
   getDb().prepare('INSERT INTO feature_flag (key, enabled, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET enabled = excluded.enabled, updated_by = excluded.updated_by, updated_at = excluded.updated_at')
     .run(key, enabled ? 1 : 0, actor.id, iso());

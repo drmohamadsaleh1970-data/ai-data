@@ -319,6 +319,7 @@ export function createApp(options = {}) {
   }));
   r.get('/owner/cold/filters', OWNER, ok(() => cold.filterOptions()));
   r.get('/owner/export-fields', OWNER, ok(() => Object.keys(owner.EXPORT_FIELDS)));
+  r.get('/owner/export-status', OWNER, ok(() => ({ enabled: flag(owner.EXPORT_FLAG) })));
   r.post('/owner/cold-exports', OWNER, requireRecentMfa, ok((req) => owner.createOwnerExport({ user: req.user, filter: req.body.filter, fields: req.body.fields })));
   r.get('/owner/cold-exports/:jobId', OWNER, requireRecentMfa, (req, res) => {
     const f = owner.exportFile(req.params.jobId, req.user);

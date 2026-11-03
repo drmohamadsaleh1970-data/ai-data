@@ -211,6 +211,15 @@ test('API sync filter: preview counts, saved filter, JVC alias, contact rule', a
   assert.equal(st.sync_filter.min_price_aed, 3000000);
   assert.equal(st.jobs[0].rows_skipped_filter, 5);
   assert.match(st.jobs[0].filter_text, /buyers/);
+  // A filter that matches nothing in the feed says so, and shows what the feed contains.
+  const none = await o.post('/api/owner/source/sync', { filter: { areas: ['Al Barari'] }, save: false });
+  assert.equal(none.status, 200);
+  assert.equal(none.data.transactions_created + none.data.transactions_updated, 0);
+  assert.match(none.data.warning.message, /Nothing was imported.*mostly by area/);
+  assert.ok(none.data.warning.feed.areas.some((a) => a.value === 'Api Island (TEST)'));
+  const nonePv = (await o.post('/api/owner/source/sync/preview', { filter: { areas: ['Al Barari'] } })).data;
+  assert.match(nonePv.warning.message, /Nothing would be imported/);
+  assert.equal(pv.warning, null, 'no warning when rows would import');
   // Clear the saved filter so other tests are unaffected.
   await o.post('/api/owner/source/sync', { filter: {}, save: true });
   delete process.env.AIHOME_SOURCE_URL;
