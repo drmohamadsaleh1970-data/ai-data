@@ -663,6 +663,12 @@ async function viewInvestorHistory() {
 
 // New data arrived (sync or file import): drop the cached Investor History results and
 // filter lists so the next visit loads them fresh instead of showing the old ones.
+// What the feed actually contains, shown when a sync or preview would import nothing.
+function warningHtml(w, inPreview = false) {
+  const list = (items) => items.map((x) => `${esc(x.value)} (${fmtNum(x.rows)})`).join(', ') || '—';
+  return `<div class="banner bad" style="margin:8px 0">${inPreview ? '' : `<b>${esc(w.message)}</b><br>`}<span class="small">The feed contains — areas: ${list(w.feed.areas)} · property types: ${list(w.feed.property_types)} · top nationalities: ${list(w.feed.nationalities)}</span></div>`;
+}
+
 function resetInvestorHistory() {
   state.ih.counts = null;
   state.ih.options = null;
@@ -1557,7 +1563,7 @@ async function ownerOrg(id) {
 async function ownerData() {
   const o = state.owner;
   if (!o.counts) { const r = await POST('/api/owner/cold/search', { filter: o.filter, limit: 50 }); Object.assign(o, { results: r.results, counts: r.counts, cursor: r.next_cursor }); }
-  const fields = await GET('/api/owner/export-fields');
+  const [fields, exp] = await Promise.all([GET('/api/owner/export-fields'), GET('/api/owner/export-status')]);
   const opts = await GET('/api/owner/cold/filters');
   const sel = (k, label) => `<label class="field">${label}<select multiple name="${k}">${(opts?.[k] || []).map((v) => `<option ${o.filter[k]?.includes(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>`;
   return `<div class="page-head"><div><div class="kicker">${t('owner_console')} · unmasked</div><h1>${t('master_data')}</h1></div></div>
@@ -1567,8 +1573,9 @@ async function ownerData() {
     <label class="field">Client role<select name="client_role"><option value="">All</option><option value="BUYER">Buyer</option><option value="SELLER">Seller</option></select></label>
     <div class="grid g2" style="gap:8px"><label class="field">Year from<input type="number" name="year_from" value="${o.filter.year_from ?? ''}"></label><label class="field">Year to<input type="number" name="year_to" value="${o.filter.year_to ?? ''}"></label></div>
     <button class="btn primary block">${t('search')}</button>
-    <details><summary class="small" style="cursor:pointer;font-weight:700">Export fields</summary><div class="grid" style="gap:4px;margin-top:8px">${fields.map((f) => `<label class="check"><input type="checkbox" name="field" value="${f}" checked> ${esc(f)}</label>`).join('')}</div></details>
-    <button type="button" class="btn gold block" data-act="owner-export">⬇ ${t('export_xlsx')}</button><div id="export-result"></div></form>
+    ${exp.enabled ? `<details><summary class="small" style="cursor:pointer;font-weight:700">Export fields</summary><div class="grid" style="gap:4px;margin-top:8px">${fields.map((f) => `<label class="check"><input type="checkbox" name="field" value="${f}" checked> ${esc(f)}</label>`).join('')}</div></details>
+    <button type="button" class="btn gold block" data-act="owner-export">⬇ ${t('export_xlsx')}</button><div id="export-result"></div>`
+    : '<div class="banner warn small">🔒 Export and download are switched off. To export, turn on <b>OWNER_COLD_EXPORT</b> in <a href="#/owner/governance">Rights &amp; governance</a>.</div>'}</form>
   <div style="min-width:0"><div class="grid g4" style="margin-bottom:12px"><div class="card"><div class="stat"><span class="l">${t('matching')}</span><span class="v">${fmtNum(o.counts.total)}</span></div></div><div class="card"><div class="stat cold"><span class="l">${t('eligible')}</span><span class="v">${fmtNum(o.counts.eligible)}</span></div></div><div class="card"><div class="stat"><span class="l">${t('restricted')}</span><span class="v">${fmtNum(o.counts.restricted)}</span></div></div></div>
     <div class="row" style="margin-bottom:10px;gap:8px;flex-wrap:wrap"><button class="btn gold" data-act="owner-to-crm" ${o.selected.size ? '' : 'disabled'}>➕ Add ${o.selected.size ? fmtNum(o.selected.size) + ' selected' : 'selected'} to my CRM</button>${o.selected.size ? '<button class="btn ghost sm" data-act="owner-clear-pick">Clear selection</button>' : ''}<button class="btn sm" data-act="open-owner-crm">Open my CRM →</button><span class="small muted">Tick rows, then add them as leads for your own follow-up.</span></div>
     <div class="table-wrap"><table class="small"><thead><tr><th><input type="checkbox" data-change="owner-pick-all" title="Select all on this page" ${o.results.length && o.results.every((r) => o.selected.has(r.id)) ? 'checked' : ''}></th><th>ID</th><th>Registration date</th><th>Client role</th><th>Client name</th><th>Nationality</th><th>${t('phone')}</th><th>${t('email')}</th><th>Country</th><th>City</th><th>Area</th><th>Property type</th><th>Master developer</th><th>Project</th><th class="num">Size (m²)</th><th class="num">Price</th><th class="num">Price / m²</th><th class="num">Txns</th><th>Rights</th><th></th></tr></thead><tbody>${o.results.map((r) => `<tr><td><input type="checkbox" data-change="owner-pick" data-id="${r.id}" ${o.selected.has(r.id) ? 'checked' : ''}></td><td class="mono">${r.id}</td><td style="white-space:nowrap">${fmtDate(r.last_registration_date)}</td><td>${esc(human(r.client_role || ''))}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.nationality || '—')}</td><td style="white-space:nowrap">${esc(r.phone || '—')}</td><td>${esc(r.email || '—')}</td><td>${esc(r.country || '—')}</td><td>${esc(r.city || '—')}</td><td>${esc(r.area || '—')}</td><td>${esc(r.property_type || '—')}</td><td>${esc(r.master_developer || '—')}</td><td>${esc(r.project || '—')}</td><td class="num">${r.size_m2 == null ? '—' : fmtNum(r.size_m2)}</td><td class="num" style="white-space:nowrap">${fmtAED(r.price_aed)}</td><td class="num" style="white-space:nowrap">${r.size_m2 && r.price_aed ? fmtAED(Math.round(r.price_aed / r.size_m2)) : '—'}</td><td class="num">${fmtNum(r.total_transactions)}</td><td><span class="badge ${r.rights_status === 'APPROVED' ? 'ok' : 'warn'}">${esc(human(r.rights_status))}</span></td><td><button class="btn sm ghost" data-act="suppress" data-id="${r.id}" title="Record a data-subject opt-out">Opt-out</button></td></tr>`).join('')}</tbody></table></div>
@@ -1900,14 +1907,15 @@ const actions = {
   'src-import': async () => {
     const body = await readUpload('src-file');
     const r = await withMfa(() => POST('/api/owner/source/import', body));
-    toast(`Imported: ${r.transactions_created} new transactions, ${r.investors_created} new investors, ${r.transactions_updated} updated, ${r.rejected} rejected`);
+    toast(r.warning ? r.warning.message : `Imported: ${r.transactions_created} new transactions, ${r.investors_created} new investors, ${r.transactions_updated} updated, ${r.rejected} rejected`, !!r.warning);
     resetInvestorHistory(); state.owner.counts = null; render();
   },
   'src-sync': async (el) => {
     el.disabled = true;
     try {
       const r = await withMfa(() => POST('/api/owner/source/sync', { filter: readSyncFilter(), save: true }));
-      toast(`Synced: ${r.transactions_created} new, ${r.transactions_updated} updated · skipped ${r.skipped_no_contact} without contact, ${r.skipped_by_filter} by filter, ${r.rejected} rejected`);
+      if (r.warning) { toast(r.warning.message, true); const out = document.getElementById('sync-out'); if (out) out.innerHTML = warningHtml(r.warning); }
+      else toast(`Synced: ${r.transactions_created} new, ${r.transactions_updated} updated · skipped ${r.skipped_no_contact} without contact, ${r.skipped_by_filter} by filter, ${r.rejected} rejected`);
       resetInvestorHistory(); state.owner.counts = null; render();
     } catch (e) { toast(errMsg(e), true); el.disabled = false; }
   },
@@ -1917,6 +1925,7 @@ const actions = {
     try {
       const r = await POST('/api/owner/source/sync/preview', { filter: readSyncFilter() });
       out.innerHTML = `<div class="banner ${r.would_import ? 'ok' : 'warn'}"><b>${fmtNum(r.would_import)}</b> of ${fmtNum(r.rows)} rows would be imported</div>
+        ${r.warning ? warningHtml(r.warning, true) : ''}
         <div class="small muted">${fmtNum(r.skipped_no_contact)} without phone/email · ${fmtNum(r.skipped_by_filter)} outside the filter${skipText(r) ? ` (${esc(skipText(r))})` : ''} · ${fmtNum(r.rejected)} unreadable</div>
         ${r.sample.length ? `<div class="table-wrap"><table><thead><tr><th>${t('name')}</th><th>Role</th><th>Nationality</th><th>Area / project</th><th class="num">AED</th><th>Contact</th></tr></thead><tbody>${r.sample.map((x) => `<tr><td>${esc(x.name)}</td><td class="small">${esc(human(x.role))}</td><td class="small">${esc(x.nationality || '—')}</td><td class="small">${esc(x.area)}${x.project ? ` · ${esc(x.project)}` : ''}</td><td class="num">${x.price_aed == null ? '—' : fmtNum(x.price_aed)}</td><td class="small">${x.has_phone ? '📞' : ''}${x.has_email ? ' ✉' : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
     } catch (e) { out.innerHTML = `<div class="banner bad">${esc(errMsg(e))}</div>`; }
