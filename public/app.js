@@ -661,6 +661,15 @@ async function viewInvestorHistory() {
   </div>`;
 }
 
+// New data arrived (sync or file import): drop the cached Investor History results and
+// filter lists so the next visit loads them fresh instead of showing the old ones.
+function resetInvestorHistory() {
+  state.ih.counts = null;
+  state.ih.options = null;
+  state.ih.results = [];
+  state.ih.cursor = null;
+}
+
 async function runSearch(append) {
   const ih = state.ih;
   const res = await POST('/api/cold/search', { filter: ih.filter, cursor: append ? ih.cursor : null, limit: 50 });
@@ -1892,14 +1901,14 @@ const actions = {
     const body = await readUpload('src-file');
     const r = await withMfa(() => POST('/api/owner/source/import', body));
     toast(`Imported: ${r.transactions_created} new transactions, ${r.investors_created} new investors, ${r.transactions_updated} updated, ${r.rejected} rejected`);
-    state.ih.counts = null; state.owner.counts = null; render();
+    resetInvestorHistory(); state.owner.counts = null; render();
   },
   'src-sync': async (el) => {
     el.disabled = true;
     try {
       const r = await withMfa(() => POST('/api/owner/source/sync', { filter: readSyncFilter(), save: true }));
       toast(`Synced: ${r.transactions_created} new, ${r.transactions_updated} updated · skipped ${r.skipped_no_contact} without contact, ${r.skipped_by_filter} by filter, ${r.rejected} rejected`);
-      state.owner.counts = null; render();
+      resetInvestorHistory(); state.owner.counts = null; render();
     } catch (e) { toast(errMsg(e), true); el.disabled = false; }
   },
   'src-sync-preview': async (el) => {
