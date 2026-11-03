@@ -605,28 +605,16 @@ async function viewInvestorHistory() {
   const presets = await GET('/api/cold/presets');
   const o = ih.options;
   const f = ih.filter;
-  const multi = (key, label) => `<label class="field">${label}<select multiple name="${key}">${o[key].map((v) => `<option ${f[key]?.includes(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>`;
   const q = state.me.entitlements?.cold?.quota;
-  const chips = Object.entries(f).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length)).map(([k, v]) => `<span class="chip">${esc(human(k))}: ${esc(Array.isArray(v) ? v.join(', ') : v)}</span>`).join('');
   return `<div class="page-head"><div><div class="kicker">❄ Cold data · ${t('investor_history')}</div><h1>${t('investor_history')}</h1></div><div class="spacer"></div>
     <div class="card" style="padding:12px 16px;min-width:280px">${quotaBlock(q)}</div></div>
   ${!ih.transferEnabled ? '<div class="banner warn" style="margin-bottom:12px">⚖ Person-level transfers are disabled until the platform records legal/rights approval. Aggregate search remains available.</div>' : ''}
   <div class="ih">
-    <form class="card filters" data-form="ih-search">
-      <div class="row"><h3 style="margin:0">${t('filters')}</h3><div class="spacer"></div><button type="button" class="btn sm ghost" data-act="ih-reset">${t('reset')}</button></div>
-      ${presets.length ? `<label class="field">${t('saved_searches')}<select data-change="ih-preset"><option value="">—</option>${presets.map((p) => `<option value='${esc(p.filter_json)}'>${esc(p.name)}</option>`).join('')}</select></label>` : ''}
-      <label class="field">${t('f_role')}<select name="client_role"><option value="">${t('f_both')}</option><option value="BUYER" ${f.client_role === 'BUYER' ? 'selected' : ''}>${t('f_buyer')}</option><option value="SELLER" ${f.client_role === 'SELLER' ? 'selected' : ''}>${t('f_seller')}</option></select></label>
-      ${multi('city', t('f_city'))}${multi('area', t('f_area'))}${multi('property_type', t('f_type'))}${multi('master_developer', t('f_dev'))}${multi('project', t('f_project'))}${multi('nationality', t('f_nat'))}
-      <div class="grid g2" style="gap:8px"><label class="field">${t('f_pmin')}<input type="number" name="price_min" value="${f.price_min ?? ''}" min="0"></label><label class="field">${t('f_pmax')}<input type="number" name="price_max" value="${f.price_max ?? ''}" min="0"></label>
-      <label class="field">${t('f_smin')}<input type="number" name="size_min" value="${f.size_min ?? ''}" min="0"></label><label class="field">${t('f_smax')}<input type="number" name="size_max" value="${f.size_max ?? ''}" min="0"></label>
-      <label class="field">${t('f_yfrom')}<input type="number" name="year_from" value="${f.year_from ?? ''}" min="1990" max="2100"></label><label class="field">${t('f_yto')}<input type="number" name="year_to" value="${f.year_to ?? ''}" min="1990" max="2100"></label></div>
-      <label class="field">${t('f_mintx')}<input type="number" name="min_transactions" value="${f.min_transactions ?? ''}" min="1"></label>
-      <label class="check"><input type="checkbox" name="has_email" ${f.has_email ? 'checked' : ''}> ${t('f_email')}</label>
-      <label class="check"><input type="checkbox" name="has_phone" ${f.has_phone ? 'checked' : ''}> ${t('f_phone')}</label>
-      <button class="btn primary block">${t('search')}</button>
-      <button type="button" class="btn sm block" data-act="ih-save">${t('save_search')}</button>
-      <p class="small muted">${esc(o.coverage_note)} Searching and previews never use quota.</p>
-    </form>
+    ${coldFilterPanel('ih-search', f, o, {
+      top: presets.length ? `<label class="field">${t('saved_searches')}<select data-change="ih-preset"><option value="">—</option>${presets.map((p) => `<option value='${esc(p.filter_json)}'>${esc(p.name)}</option>`).join('')}</select></label>` : '',
+      bottom: `<button type="button" class="btn sm block" data-act="ih-save">${t('save_search')}</button>
+      <p class="small muted">${esc(o.coverage_note)} Searching and previews never use quota.</p>`,
+    })}
     <div style="min-width:0">
       <div class="grid g4" style="margin-bottom:12px">
         <div class="card"><div class="stat"><span class="l">${t('matching')}</span><span class="v">${fmtNum(ih.counts.total)}</span></div></div>
@@ -634,7 +622,7 @@ async function viewInvestorHistory() {
         <div class="card"><div class="stat"><span class="l">${t('already_in_crm')}</span><span class="v">${fmtNum(ih.counts.already_acquired)}</span></div></div>
         <div class="card"><div class="stat"><span class="l">${t('restricted')}</span><span class="v">${fmtNum(ih.counts.restricted)}</span></div></div>
       </div>
-      ${chips ? `<div class="chips" style="margin-bottom:10px">${chips}</div>` : ''}
+      ${filterChips('ih', f)}
       <div class="table-wrap"><table>
         <thead><tr><th><input type="checkbox" data-act="ih-page" aria-label="Select page"></th><th>${t('investor')}</th><th>${t('contact')}</th><th>${t('f_role')}</th><th>${t('f_area')} · ${t('f_project')}</th><th>${t('f_type')}</th><th class="num">m²</th><th class="num">${t('price')}</th><th>${t('last_reg')}</th><th class="num">${t('txns')}</th><th>${t('status')}</th></tr></thead>
         <tbody>${ih.results.map((r) => {
@@ -683,7 +671,11 @@ function readFilterForm(form) {
   const f = {};
   for (const el of form.elements) {
     if (!el.name) continue;
-    if (el.multiple) { const v = [...el.selectedOptions].map((o) => o.value); if (v.length) f[el.name] = v; } else if (el.type === 'checkbox') { if (el.checked) f[el.name] = true; } else if (el.value !== '') f[el.name] = el.type === 'number' ? Number(el.value) : el.value;
+    if (el.multiple) { const v = [...el.selectedOptions].map((o) => o.value); if (v.length) f[el.name] = v; }
+    // Checkbox lists inside a searchable dropdown are multi-value filters.
+    else if (el.type === 'checkbox' && el.closest('details.msel')) { if (el.checked) (f[el.name] ||= []).push(el.value); }
+    else if (el.type === 'checkbox') { if (el.checked) f[el.name] = true; }
+    else if (el.value !== '') f[el.name] = el.type === 'number' || el.hasAttribute('data-num') ? Number(el.value) : el.value;
   }
   return f;
 }
@@ -1559,17 +1551,14 @@ async function ownerData() {
   if (!o.counts) { const r = await POST('/api/owner/cold/search', { filter: o.filter, limit: 50 }); Object.assign(o, { results: r.results, counts: r.counts, cursor: r.next_cursor }); }
   const fields = await GET('/api/owner/export-fields');
   const opts = await GET('/api/owner/cold/filters');
-  const sel = (k, label) => `<label class="field">${label}<select multiple name="${k}">${(opts?.[k] || []).map((v) => `<option ${o.filter[k]?.includes(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>`;
+  const exportBlock = `<details><summary class="small" style="cursor:pointer;font-weight:700">Export fields</summary><div class="grid" style="gap:4px;margin-top:8px">${fields.map((f) => `<label class="check"><input type="checkbox" name="field" value="${f}" checked> ${esc(f)}</label>`).join('')}</div></details>
+    <button type="button" class="btn gold block" data-act="owner-export">⬇ ${t('export_xlsx')}</button><div id="export-result"></div>`;
   return `<div class="page-head"><div><div class="kicker">${t('owner_console')} · unmasked</div><h1>${t('master_data')}</h1></div></div>
   <div class="banner bad" style="margin-bottom:16px">Owner-only view with full personal data. Every search and export is audited.</div>
   ${dangerZone([{ act: 'owner-delete-investors', title: 'Delete all investor data', text: `Wipes the whole Master Cold database — ${fmtNum(o.counts?.total ?? 0)} investors in the current view, all imported/synced records, their transactions and the import history. Customers keep the copies already in their CRM.` }])}
-  <div class="ih"><form class="card filters" data-form="owner-search">${sel('city', 'City') + sel('area', 'Area') + sel('property_type', 'Type')}
-    <label class="field">Client role<select name="client_role"><option value="">All</option><option value="BUYER">Buyer</option><option value="SELLER">Seller</option></select></label>
-    <div class="grid g2" style="gap:8px"><label class="field">Year from<input type="number" name="year_from" value="${o.filter.year_from ?? ''}"></label><label class="field">Year to<input type="number" name="year_to" value="${o.filter.year_to ?? ''}"></label></div>
-    <button class="btn primary block">${t('search')}</button>
-    <details><summary class="small" style="cursor:pointer;font-weight:700">Export fields</summary><div class="grid" style="gap:4px;margin-top:8px">${fields.map((f) => `<label class="check"><input type="checkbox" name="field" value="${f}" checked> ${esc(f)}</label>`).join('')}</div></details>
-    <button type="button" class="btn gold block" data-act="owner-export">⬇ ${t('export_xlsx')}</button><div id="export-result"></div></form>
+  <div class="ih">${coldFilterPanel('owner-search', o.filter, opts || {}, { bottom: exportBlock })}
   <div style="min-width:0"><div class="grid g4" style="margin-bottom:12px"><div class="card"><div class="stat"><span class="l">${t('matching')}</span><span class="v">${fmtNum(o.counts.total)}</span></div></div><div class="card"><div class="stat cold"><span class="l">${t('eligible')}</span><span class="v">${fmtNum(o.counts.eligible)}</span></div></div><div class="card"><div class="stat"><span class="l">${t('restricted')}</span><span class="v">${fmtNum(o.counts.restricted)}</span></div></div></div>
+    ${filterChips('owner', o.filter)}
     <div class="row" style="margin-bottom:10px;gap:8px;flex-wrap:wrap"><button class="btn gold" data-act="owner-to-crm" ${o.selected.size ? '' : 'disabled'}>➕ Add ${o.selected.size ? fmtNum(o.selected.size) + ' selected' : 'selected'} to my CRM</button>${o.selected.size ? '<button class="btn ghost sm" data-act="owner-clear-pick">Clear selection</button>' : ''}<button class="btn sm" data-act="open-owner-crm">Open my CRM →</button><span class="small muted">Tick rows, then add them as leads for your own follow-up.</span></div>
     <div class="table-wrap"><table class="small"><thead><tr><th><input type="checkbox" data-change="owner-pick-all" title="Select all on this page" ${o.results.length && o.results.every((r) => o.selected.has(r.id)) ? 'checked' : ''}></th><th>ID</th><th>Registration date</th><th>Client role</th><th>Client name</th><th>Nationality</th><th>${t('phone')}</th><th>${t('email')}</th><th>Country</th><th>City</th><th>Area</th><th>Property type</th><th>Master developer</th><th>Project</th><th class="num">Size (m²)</th><th class="num">Price</th><th class="num">Price / m²</th><th class="num">Txns</th><th>Rights</th><th></th></tr></thead><tbody>${o.results.map((r) => `<tr><td><input type="checkbox" data-change="owner-pick" data-id="${r.id}" ${o.selected.has(r.id) ? 'checked' : ''}></td><td class="mono">${r.id}</td><td style="white-space:nowrap">${fmtDate(r.last_registration_date)}</td><td>${esc(human(r.client_role || ''))}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.nationality || '—')}</td><td style="white-space:nowrap">${esc(r.phone || '—')}</td><td>${esc(r.email || '—')}</td><td>${esc(r.country || '—')}</td><td>${esc(r.city || '—')}</td><td>${esc(r.area || '—')}</td><td>${esc(r.property_type || '—')}</td><td>${esc(r.master_developer || '—')}</td><td>${esc(r.project || '—')}</td><td class="num">${r.size_m2 == null ? '—' : fmtNum(r.size_m2)}</td><td class="num" style="white-space:nowrap">${fmtAED(r.price_aed)}</td><td class="num" style="white-space:nowrap">${r.size_m2 && r.price_aed ? fmtAED(Math.round(r.price_aed / r.size_m2)) : '—'}</td><td class="num">${fmtNum(r.total_transactions)}</td><td><span class="badge ${r.rights_status === 'APPROVED' ? 'ok' : 'warn'}">${esc(human(r.rights_status))}</span></td><td><button class="btn sm ghost" data-act="suppress" data-id="${r.id}" title="Record a data-subject opt-out">Opt-out</button></td></tr>`).join('')}</tbody></table></div>
     ${o.cursor ? `<div style="text-align:center;margin-top:12px"><button class="btn" data-act="owner-more">${t('load_more')}</button></div>` : ''}</div></div>`;
@@ -1615,17 +1604,109 @@ const uniqSorted = (...lists) => {
 };
 const fmtShortAED = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(2)}M` : `${Math.round(n / 1e3)}K`);
 
-function multiSelect(name, label, options, selected, allText) {
-  const sel = new Set((selected || []).map((v) => String(v).toLowerCase()));
+// Searchable checkbox dropdown. Options:
+//   exact    – keep values as stored (no case-folding), for filters matched exactly in SQL
+//   counts   – { value: n } shown beside each option
+//   parents  – { value: [parent values] } plus parentPick, to grey out options outside the
+//              chosen parents (areas outside the chosen cities); checked options always stay
+//   max      – most values that may be chosen
+function multiSelect(name, label, options, selected, allText, { exact = false, counts = null, parents = null, parentPick = [], max = 0 } = {}) {
+  const key = (v) => (exact ? String(v) : String(v).toLowerCase());
+  const sel = new Set((selected || []).map(key));
   // Keep saved choices visible even if they are not in today's list.
-  const all = uniqSorted(options, (selected || []).filter((v) => !options.some((o) => o.toLowerCase() === String(v).toLowerCase())));
-  const summary = (n) => (n ? `${n} selected` : allText);
-  return `<div class="field msel-wrap"><span>${esc(label)}</span><details class="msel" data-all="${esc(allText)}">
-    <summary class="msel-sum">${esc(summary(all.filter((o) => sel.has(o.toLowerCase())).length))}</summary>
+  const missing = (selected || []).filter((v) => !options.some((o) => key(o) === key(v)));
+  const all = exact ? [...new Set([...options, ...missing].map(String))].sort((x, y) => x.localeCompare(y)) : uniqSorted(options, missing);
+  const pick = new Set(parentPick || []);
+  const off = (o) => parents && pick.size && !sel.has(key(o)) && !(parents[o] || []).some((p) => pick.has(p));
+  const id = `msel-${name}-${Math.random().toString(36).slice(2, 7)}`;
+  return `<div class="field msel-wrap" role="group" aria-labelledby="${id}" data-key="${esc(name)}"><span id="${id}">${esc(label)}</span><details class="msel" data-all="${esc(allText)}"${max ? ` data-max="${max}"` : ''}>
+    <summary class="msel-sum">${esc(mselSummary(all.filter((o) => sel.has(key(o))), allText, max))}</summary>
     <div class="msel-pop"><input type="search" class="msel-search" placeholder="Search ${esc(label.toLowerCase())}…" aria-label="Search ${esc(label)}">
-      <div class="msel-tools"><button type="button" class="btn sm ghost" data-msel="none">Clear</button><span class="small muted">${fmtNum(all.length)} options</span></div>
-      <div class="msel-list">${all.map((o) => `<label class="msel-opt"><input type="checkbox" name="${name}" value="${esc(o)}" ${sel.has(o.toLowerCase()) ? 'checked' : ''}><span>${esc(o)}</span></label>`).join('')}</div>
+      <div class="msel-tools"><span class="row" style="gap:4px"><button type="button" class="btn sm ghost" data-msel="shown">Select shown</button><button type="button" class="btn sm ghost" data-msel="none">Clear</button></span><span class="small muted">${fmtNum(all.length)} options</span></div>
+      <div class="msel-list">${all.map((o) => `<label class="msel-opt"${off(o) ? ' data-off' : ''}${parents ? ` data-parents="${esc(JSON.stringify(parents[o] || []))}"` : ''}><input type="checkbox" name="${name}" value="${esc(o)}" ${sel.has(key(o)) ? 'checked' : ''}><span>${esc(o)}</span>${counts && counts[o] != null ? `<span class="msel-n" aria-hidden="true">${fmtNum(counts[o])}</span>` : ''}</label>`).join('') || '<div class="small muted" style="padding:6px">No values in the data yet.</div>'}</div>
     </div></details></div>`;
+}
+// "Dubai, Sharjah" for one or two picks, "5 selected" beyond that.
+function mselSummary(picked, allText, max) {
+  if (!picked.length) return allText;
+  const base = picked.length <= 2 ? picked.join(', ') : `${picked.length} selected`;
+  return max && picked.length > max ? `${base} — max ${max}` : base;
+}
+
+// --- Cold-data filter panel, shared by the owner's Master Cold database and the
+// subscriber Investor History page. Every key maps to a filter the server already accepts
+// (server/cold.js parseFilter).
+const FILTER_MAX_VALUES = 100;
+const MIN_TX_STEPS = [2, 3, 5, 10];
+const RANGE_PAIRS = [['price_min', 'price_max'], ['size_min', 'size_max'], ['year_from', 'year_to']];
+
+function coldFilterPanel(form, f, o, { top = '', bottom = '' } = {}) {
+  const opt = (v, label, cur) => `<option value="${v}" ${String(cur ?? '') === String(v) ? 'selected' : ''}>${esc(label)}</option>`;
+  // Steps plus the current value, so a saved search with an odd number still shows it.
+  const steps = (list, cur) => [...new Set([...list, ...(cur != null && cur !== '' ? [Number(cur)] : [])])].sort((a, b) => a - b);
+  const priceSel = (name, anyLabel) => `<select name="${name}" data-num>${opt('', anyLabel, f[name])}${steps(PRICE_STEPS_AED, f[name]).map((p) => opt(p, `AED ${fmtShortAED(p)}`, f[name])).join('')}</select>`;
+  const thisYear = new Date().getFullYear();
+  // Years present in the data, newest first; fall back to 2002–now before any import.
+  const years = o.years?.length ? o.years : Array.from({ length: thisYear - 2001 }, (_, i) => thisYear - i);
+  const yearSel = (name) => `<select name="${name}" data-num>${opt('', t('f_any'), f[name])}${steps(years, f[name]).reverse().map((y) => opt(y, y, f[name])).join('')}</select>`;
+  const ms = (key, label, extra = {}) => multiSelect(key, label, o[key] || [], f[key], t('f_any'), { exact: true, counts: o.counts?.[key], max: FILTER_MAX_VALUES, ...extra });
+  const n = activeFilterCount(f);
+  return `<form class="card filters cfp" data-form="${form}" data-scope="${form.replace('-search', '')}">
+    <div class="row" style="gap:8px"><h3 style="margin:0">${t('filters')}</h3>${n ? `<span class="badge ok">${fmtNum(n)} ${t('f_active')}</span>` : ''}<div class="spacer"></div>
+      <button type="button" class="btn sm ghost" data-act="cf-clear" data-scope="${form.replace('-search', '')}" ${n ? '' : 'disabled'}>${t('f_clear_all')}</button></div>
+    ${top}
+    <label class="field">${t('f_role')}<select name="client_role">${opt('', t('f_both'), f.client_role)}${opt('BUYER', t('f_buyer'), f.client_role)}${opt('SELLER', t('f_seller'), f.client_role)}</select></label>
+    <div class="cf-sec">${t('f_sec_location')}</div>
+    ${ms('city', t('f_city'))}
+    ${ms('area', t('f_area'), { parents: o.area_city, parentPick: f.city })}
+    ${ms('project', t('f_project'))}
+    ${ms('master_developer', t('f_dev'))}
+    <div class="cf-sec">${t('f_sec_property')}</div>
+    ${ms('property_type', t('f_type'))}
+    <div class="grid g2" style="gap:8px">
+      <label class="field">${t('f_pmin')}${priceSel('price_min', t('f_any'))}</label><label class="field">${t('f_pmax')}${priceSel('price_max', t('f_any'))}</label>
+      <label class="field">${t('f_smin')}<input type="number" name="size_min" value="${f.size_min ?? ''}" min="0" inputmode="numeric"></label><label class="field">${t('f_smax')}<input type="number" name="size_max" value="${f.size_max ?? ''}" min="0" inputmode="numeric"></label></div>
+    <div class="cf-sec">${t('f_sec_investor')}</div>
+    ${ms('nationality', t('f_nat'))}
+    <div class="grid g2" style="gap:8px"><label class="field">${t('f_yfrom')}${yearSel('year_from')}</label><label class="field">${t('f_yto')}${yearSel('year_to')}</label></div>
+    <label class="field">${t('f_mintx')}<select name="min_transactions" data-num>${opt('', t('f_any'), f.min_transactions)}${steps(MIN_TX_STEPS, f.min_transactions).map((x) => opt(x, `${x}+`, f.min_transactions)).join('')}</select></label>
+    <div class="row" style="gap:14px"><label class="check"><input type="checkbox" name="has_phone" ${f.has_phone ? 'checked' : ''}> ${t('f_phone')}</label><label class="check"><input type="checkbox" name="has_email" ${f.has_email ? 'checked' : ''}> ${t('f_email')}</label></div>
+    <div class="cf-go"><button class="btn primary block">${t('search')}</button></div>
+    ${bottom}
+  </form>`;
+}
+
+function activeFilterCount(f) {
+  return Object.entries(f || {}).reduce((n, [k, v]) => n + (k === 'field' || v == null || v === '' || v === false ? 0 : Array.isArray(v) ? v.length : 1), 0);
+}
+
+// One removable chip per value, so "Area: Dubai Marina" can be dropped on its own.
+function filterChips(scope, f) {
+  const val = (k, v) => (k.startsWith('price_') ? fmtAED(v) : k === 'client_role' ? (v === 'BUYER' ? t('f_buyer') : t('f_seller')) : k === 'min_transactions' ? `${v}+` : String(v));
+  const chips = [];
+  for (const [k, v] of Object.entries(f || {})) {
+    if (k === 'field' || v == null || v === '' || v === false) continue;
+    for (const one of Array.isArray(v) ? v : [v]) {
+      const text = one === true ? human(k) : `${human(k)}: ${val(k, one)}`;
+      chips.push(`<span class="chip"><span>${esc(text)}</span><button type="button" class="chip-x" data-act="cf-chip" data-scope="${scope}" data-key="${esc(k)}" data-value="${esc(String(one))}" aria-label="Remove ${esc(text)}">×</button></span>`);
+    }
+  }
+  return chips.length ? `<div class="chips" style="margin-bottom:10px">${chips.join('')}</div>` : '';
+}
+
+// Read the panel, fix reversed ranges, and refuse more values than the server accepts.
+function readColdFilter(form) {
+  const f = readFilterForm(form);
+  delete f.field;
+  for (const [a, b] of RANGE_PAIRS) if (f[a] != null && f[b] != null && f[a] > f[b]) [f[a], f[b]] = [f[b], f[a]];
+  const over = Object.entries(f).find(([, v]) => Array.isArray(v) && v.length > FILTER_MAX_VALUES);
+  if (over) throw new Error(`${human(over[0])}: choose at most ${FILTER_MAX_VALUES} values (${over[1].length} selected).`);
+  return f;
+}
+
+async function applyColdFilter(scope, filter) {
+  if (scope === 'owner') { state.owner.filter = filter; state.owner.counts = null; render(); return; }
+  state.ih.filter = filter; state.ih.selected.clear(); await runSearch(false); render();
 }
 
 function syncFilterForm(s) {
@@ -1670,8 +1751,26 @@ function readSyncFilter() {
 }
 
 // Multi-select behaviour: live count in the summary, search, clear, one open at a time.
-const mselSync = (d) => { const n = d.querySelectorAll('input[type=checkbox]:checked').length; d.querySelector('.msel-sum').textContent = n ? `${n} selected` : d.dataset.all; };
-document.addEventListener('change', (e) => { const d = e.target.closest?.('details.msel'); if (d && e.target.type === 'checkbox') mselSync(d); });
+const mselSync = (d) => {
+  const picked = [...d.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.value);
+  const max = Number(d.dataset.max) || 0;
+  d.querySelector('.msel-sum').textContent = mselSummary(picked, d.dataset.all, max);
+  d.classList.toggle('over', !!max && picked.length > max);
+};
+// Picking cities narrows the area list to areas in those cities (checked areas stay).
+const mselCascade = (form) => {
+  const cities = new Set([...form.querySelectorAll('[data-key=city] input[type=checkbox]:checked')].map((c) => c.value));
+  form.querySelectorAll('[data-key=area] .msel-opt[data-parents]').forEach((l) => {
+    const off = cities.size && !l.querySelector('input').checked && !JSON.parse(l.dataset.parents).some((c) => cities.has(c));
+    l.toggleAttribute('data-off', !!off);
+  });
+};
+document.addEventListener('change', (e) => {
+  const d = e.target.closest?.('details.msel');
+  if (!d || e.target.type !== 'checkbox') return;
+  mselSync(d);
+  if (d.closest('[data-key=city]') && d.closest('form.cfp')) mselCascade(d.closest('form.cfp'));
+});
 document.addEventListener('input', (e) => {
   if (!e.target.classList?.contains('msel-search')) return;
   const q = e.target.value.trim().toLowerCase();
@@ -1679,7 +1778,14 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('click', (e) => {
   const clr = e.target.closest?.('[data-msel="none"]');
-  if (clr) { const d = clr.closest('details.msel'); d.querySelectorAll('input[type=checkbox]').forEach((c) => { c.checked = false; }); mselSync(d); return; }
+  if (clr) { const d = clr.closest('details.msel'); d.querySelectorAll('input[type=checkbox]').forEach((c) => { c.checked = false; }); mselSync(d); if (d.closest('form.cfp')) mselCascade(d.closest('form.cfp')); return; }
+  const shown = e.target.closest?.('[data-msel="shown"]');
+  if (shown) {
+    const d = shown.closest('details.msel');
+    d.querySelectorAll('.msel-opt:not([hidden]):not([data-off]) input[type=checkbox]').forEach((c) => { c.checked = true; });
+    mselSync(d); if (d.closest('form.cfp')) mselCascade(d.closest('form.cfp'));
+    return;
+  }
   document.querySelectorAll('details.msel[open]').forEach((d) => { if (!d.contains(e.target)) d.open = false; });
 });
 
@@ -1824,9 +1930,16 @@ const actions = {
   'ih-pick': (el) => { const id = Number(el.dataset.id); el.checked ? state.ih.selected.add(id) : state.ih.selected.delete(id); el.closest('tr').classList.toggle('sel', el.checked); updateBasket(); },
   'ih-page': (el) => { for (const r of state.ih.results) if (!r.acquired && !r.blocked_reason) el.checked ? state.ih.selected.add(r.id) : state.ih.selected.delete(r.id); render(); },
   'ih-clear': () => { state.ih.selected.clear(); render(); },
+  'cf-clear': (el) => applyColdFilter(el.dataset.scope, {}),
+  'cf-chip': (el) => {
+    const f = { ...(el.dataset.scope === 'owner' ? state.owner.filter : state.ih.filter) };
+    const { key, value } = el.dataset;
+    if (Array.isArray(f[key])) { f[key] = f[key].filter((v) => String(v) !== value); if (!f[key].length) delete f[key]; } else delete f[key];
+    return applyColdFilter(el.dataset.scope, f);
+  },
   'ih-reset': async () => { state.ih.filter = {}; state.ih.selected.clear(); await runSearch(false); render(); },
   'ih-more': async () => { await runSearch(true); render(); },
-  'ih-save': async () => { const name = prompt(t('save_search')); if (!name) return; await POST('/api/cold/presets', { name, filter: readFilterForm(document.querySelector('[data-form=ih-search]')) }); toast('Saved ✓'); render(); },
+  'ih-save': async () => { const name = prompt(t('save_search')); if (!name) return; await POST('/api/cold/presets', { name, filter: readColdFilter(document.querySelector('[data-form=ih-search]')) }); toast('Saved ✓'); render(); },
   'ih-transfer-sel': () => openTransfer({ mode: 'ids', ids: [...state.ih.selected] }),
   'ih-transfer-filter': () => openTransfer({ mode: 'filter', filter: state.ih.filter }),
   'task-done': async (el) => { await POST(`/api/crm/tasks/${el.dataset.id}/complete`); toast('✓'); render(); },
@@ -2005,8 +2118,8 @@ const forms = {
     await POST('/api/organizations', { name: f.name.value, kind: f.plan.value === 'AGENCY_MONTHLY' ? 'AGENCY' : 'AGENT', business_contact: f.business_contact.value, license_no: f.license_no.value, language: f.language.value, timezone: f.timezone.value, terms: f.terms.checked });
     go(`#/billing?plan=${f.plan.value}`);
   },
-  'ih-search': async (f) => { state.ih.filter = readFilterForm(f); state.ih.selected.clear(); await runSearch(false); render(); },
-  'owner-search': async (f) => { const filter = readFilterForm(f); delete filter.field; state.owner.filter = filter; state.owner.counts = null; render(); },
+  'ih-search': (f) => applyColdFilter('ih', readColdFilter(f)),
+  'owner-search': (f) => applyColdFilter('owner', readColdFilter(f)),
   'crm-filter': (f) => { const q = new URLSearchParams(Object.fromEntries([...new FormData(f)].filter(([, v]) => v))).toString(); go('#/crm' + (q ? '?' + q : '')); },
   'lead-activity': async (f) => { await POST(`/api/crm/leads/${f.dataset.id}/activities`, { type: f.type.value, body: f.body.value, ...(f.template_id?.value ? { template_id: Number(f.template_id.value) } : {}) }); toast('✓'); render(); },
   'alert-create': async (f) => {

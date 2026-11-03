@@ -6,6 +6,7 @@ import { currentHandler, findPerson, repeatOnLead } from './crm.js';
 const MAX_PAGE = 50;
 const MAX_IDS_PER_REQUEST = 1000;
 const MAX_FILTER_TRANSFER = 5000;
+const MAX_FILTER_VALUES = 100; // per multi-select filter; the UI enforces the same limit
 export const COLD_LABEL = 'Historical investor record — NOT verified as a new/current inquiry';
 
 // --- Filter validation: the client sends a filter *description*; SQL is built only
@@ -21,7 +22,7 @@ export function parseFilter(input = {}) {
   for (const k of Object.keys(STRING_FILTERS)) {
     const v = input[k];
     if (v == null || v === '') continue;
-    const arr = (Array.isArray(v) ? v : [v]).map(String).filter((s) => s.length > 0 && s.length <= 120).slice(0, 25);
+    const arr = (Array.isArray(v) ? v : [v]).map(String).filter((s) => s.length > 0 && s.length <= 120).slice(0, MAX_FILTER_VALUES);
     if (arr.length) f[k] = arr;
   }
   if (input.client_role) {
@@ -163,10 +164,23 @@ function holderMap(orgId, ids, conn = getDb()) {
 export function filterOptions() {
   const db = getDb();
   const distinct = (col, tbl = 'investor_transaction') => db.prepare(`SELECT DISTINCT ${col} AS v FROM ${tbl} WHERE ${col} IS NOT NULL ORDER BY 1`).all().map((r) => r.v);
+  // How many investors each value covers, so the filter can show "Business Bay (412)".
+  const counts = {};
+  for (const [k, col] of Object.entries(STRING_FILTERS)) {
+    const from = k === 'nationality' ? 'investor_contact ic' : 'investor_contact ic JOIN investor_transaction t ON t.investor_id = ic.id';
+    counts[k] = Object.fromEntries(db.prepare(`SELECT ${col} AS v, COUNT(DISTINCT ic.id) AS n FROM ${from}
+        WHERE ${col} IS NOT NULL AND ic.rights_status != 'DENIED' GROUP BY ${col}`).all().map((r) => [r.v, Number(r.n)]));
+  }
+  // Which cities each area belongs to, so the area list narrows when a city is picked.
+  const areaCity = {};
+  for (const r of db.prepare('SELECT DISTINCT area, city FROM investor_transaction WHERE area IS NOT NULL AND city IS NOT NULL').all()) (areaCity[r.area] ||= []).push(r.city);
+  const years = db.prepare("SELECT DISTINCT substr(registration_date,1,4) AS y FROM investor_transaction WHERE registration_date IS NOT NULL ORDER BY 1 DESC").all()
+    .map((r) => Number(r.y)).filter((y) => y >= 1900 && y <= 2100);
   return {
     country: distinct('country'), city: distinct('city'), area: distinct('area'), property_type: distinct('property_type'),
     master_developer: distinct('master_developer'), project: distinct('project'), nationality: distinct('nationality', 'investor_contact'),
     client_role: ['BUYER', 'SELLER'],
+    counts, area_city: areaCity, years,
     coverage_note: 'Fields shown are the fields present in the platform dataset. Unknown values are not imputed.',
   };
 }

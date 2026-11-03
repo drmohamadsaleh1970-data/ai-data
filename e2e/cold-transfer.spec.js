@@ -8,7 +8,11 @@ test('investor search is masked, and a selected transfer is charged once and lan
   const usedBefore = await coldUsedToday(page);
 
   await page.getByLabel('Client role').selectOption('BUYER');
-  await page.getByLabel('Area / community').selectOption('Dubai Marina');
+  const area = page.getByRole('group', { name: 'Area / community' });
+  await area.locator('summary').click();
+  await area.getByPlaceholder(/Search area/).fill('marina');
+  await area.getByLabel('Dubai Marina', { exact: true }).check();
+  await expect(area.locator('summary')).toHaveText('Dubai Marina');
   // Only investors with a known email, so the CRM check at the end does not depend on
   // which fictional records happen to come first.
   await page.getByLabel('Email known').check();
