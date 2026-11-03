@@ -243,7 +243,9 @@ function provenanceId(conn) {
 }
 
 export function preview(rows) {
-  const headers = rows.length ? Object.keys(rows[0]) : [];
+  // Every column seen in any row. JSON feeds often omit empty fields, so the first row alone
+  // can lack e.g. Email - which used to drop every email in the whole feed.
+  const headers = [...new Set(rows.flatMap((r) => (r && typeof r === 'object' ? Object.keys(r) : [])))];
   const map = mapHeaders(headers);
   const parsed = rows.map((raw, i) => ({ row: i + 1, ...normalizeRow(raw, map.mapping) }));
   return {
