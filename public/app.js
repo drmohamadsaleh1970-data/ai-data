@@ -1579,8 +1579,9 @@ async function ownerSource() {
   <div class="grid g2" style="margin-top:16px;align-items:start">
     <div class="card grid" style="gap:10px"><h3>Import an export file</h3>
       <p class="small muted">Export the investor table from ai-home.world (XLSX or CSV) and upload it here. Recognised columns: Country, City, AreaNameEn, PropertyTypeEn, Client Role, Client name, NATIONALITY, Master Developer, Project Name, Size(M2), Price/ProcedureValue, Registration_Date, plus optional transaction ID, email, phone/mobile, WhatsApp. Re-importing the same file never creates duplicates.</p>
-      <input type="file" id="src-file" accept=".xlsx,.csv" aria-label="ai-home.world export file">
-      <div class="row"><button class="btn" data-act="src-preview">Preview mapping</button><button class="btn gold" data-act="src-import">Import</button></div>
+      <input type="file" id="src-file" accept=".xlsx,.csv,.txt" multiple aria-label="Investor data files">
+      <p class="small muted" style="margin:0">Select any number of files together. XLSX/CSV/TXT are accepted in this test build. Each file is analysed and imported separately so one bad file does not stop the rest.</p>
+      <div class="row"><button class="btn" data-act="src-preview">Preview all files</button><button class="btn gold" data-act="src-import">Import all files</button></div>
       <div id="src-out"></div></div>
     <div class="card grid" style="gap:10px"><div class="row" style="justify-content:space-between"><h3 style="margin:0">API sync</h3>${statusBadge(s.api)}</div>
       ${s.api === 'CONNECTED' ? `<p class="small">Source: <span class="mono">${esc(s.api_url_host)}</span>${s.scheduled_sync_minutes ? ` · every ${s.scheduled_sync_minutes} min` : ' · manual only'}</p>${syncFilterForm(s)}`
@@ -1792,15 +1793,27 @@ document.addEventListener('click', (e) => {
 const SKIP_LABEL = { role: 'buyer/seller', nationality: 'nationality', area: 'area', property_type: 'property type', price: 'price', date: 'date' };
 const skipText = (r) => Object.entries(r.skipped_reasons || {}).map(([k, v]) => `${SKIP_LABEL[k] || k}: ${fmtNum(v)}`).join(' · ');
 
-function readUpload(id) {
+function fileToUpload(f) {
   return new Promise((res, rej) => {
-    const f = document.getElementById(id).files[0];
-    if (!f) return rej(new Error('Choose a file first'));
     const r = new FileReader();
     r.onload = () => res({ file_base64: r.result.split(',')[1], file_name: f.name });
-    r.onerror = () => rej(new Error('Could not read file'));
+    r.onerror = () => rej(new Error(`Could not read ${f.name}`));
     r.readAsDataURL(f);
   });
+}
+function selectedUploadFiles(id) {
+  const files = [...(document.getElementById(id)?.files || [])];
+  if (!files.length) throw new Error('Choose one or more files first');
+  return files;
+}
+async function readUpload(id) {
+  return fileToUpload(selectedUploadFiles(id)[0]);
+}
+async function readUploads(id) {
+  const files = selectedUploadFiles(id);
+  const out = [];
+  for (const f of files) out.push(await fileToUpload(f));
+  return out;
 }
 
 async function ownerHot() {
@@ -2005,16 +2018,43 @@ const actions = {
   flag: async (el) => { try { await withMfa(() => POST('/api/owner/flags', { key: el.dataset.key, enabled: el.dataset.on === '1' })); render(); } catch (e) { toast(errMsg(e), true); } },
   prov: async (el) => { try { await withMfa(() => POST(`/api/owner/provenance/${el.dataset.id}/review`, { allow_transfer: el.dataset.on === '1' })); render(); } catch (e) { toast(errMsg(e), true); } },
   'src-preview': async () => {
-    const p = await POST('/api/owner/source/preview', await readUpload('src-file'));
-    document.getElementById('src-out').innerHTML = `<div class="banner ${p.missing_required.length ? 'bad' : p.rejected ? 'warn' : 'ok'}">${fmtNum(p.rows)} rows · ${fmtNum(p.valid)} valid · ${fmtNum(p.rejected)} rejected${p.has_contact_columns ? ' · contact columns found' : ' · no email/phone columns'}</div>
-      <div class="table-wrap"><table><thead><tr><th>Column in file</th><th>Mapped to</th></tr></thead><tbody>${Object.entries(p.mapping).map(([h, f]) => `<tr><td>${esc(h)}</td><td class="mono">${esc(f)}</td></tr>`).join('')}${p.unmapped.map((h) => `<tr><td>${esc(h)}</td><td class="muted">not imported</td></tr>`).join('')}</tbody></table></div>
-      ${p.sample_errors.length ? `<div class="small">${p.sample_errors.map((e) => `Row ${e.row}: ${esc(e.errors.join('; '))}`).join('<br>')}</div>` : ''}`;
+    const out = document.getElementById('src-out');
+    const files = selectedUploadFiles('src-file');
+    out.innerHTML = `<div class="small muted">Analysing ${fmtNum(files.length)} file(s)…</div>`;
+    const blocks = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      try {
+        const p = await POST('/api/owner/source/preview', await fileToUpload(f));
+        blocks.push(`<div class="card" style="padding:12px;margin-top:10px"><div class="row"><b>${esc(f.name)}</b><div class="spacer"></div><span class="badge ${p.missing_required.length ? 'bad' : p.rejected ? 'warn' : 'ok'}">${fmtNum(p.rows)} rows · ${fmtNum(p.valid)} valid · ${fmtNum(p.rejected)} rejected</span></div>
+          <div class="table-wrap"><table><thead><tr><th>Column in file</th><th>Mapped to</th></tr></thead><tbody>${Object.entries(p.mapping).map(([h, fld]) => `<tr><td>${esc(h)}</td><td class="mono">${esc(fld)}</td></tr>`).join('')}${p.unmapped.map((h) => `<tr><td>${esc(h)}</td><td class="muted">needs mapping / not imported</td></tr>`).join('')}</tbody></table></div>
+          ${p.sample_errors.length ? `<div class="small">${p.sample_errors.map((e) => `Row ${e.row}: ${esc(e.errors.join('; '))}`).join('<br>')}</div>` : ''}</div>`);
+      } catch (e) {
+        blocks.push(`<div class="banner bad" style="margin-top:10px"><b>${esc(f.name)}</b> — ${esc(errMsg(e))}</div>`);
+      }
+      out.innerHTML = `<div class="small muted">Analysed ${fmtNum(i + 1)} / ${fmtNum(files.length)} file(s)</div>` + blocks.join('');
+    }
   },
   'src-import': async () => {
-    const body = await readUpload('src-file');
-    const r = await withMfa(() => POST('/api/owner/source/import', body));
-    toast(`Imported: ${r.transactions_created} new transactions, ${r.investors_created} new investors, ${r.transactions_updated} updated, ${r.rejected} rejected`);
-    resetInvestorHistory(); state.owner.counts = null; render();
+    const out = document.getElementById('src-out');
+    const files = selectedUploadFiles('src-file');
+    const rows = [];
+    let ok = 0, failed = 0;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      out.innerHTML = `<div class="banner cold">Importing ${fmtNum(i + 1)} / ${fmtNum(files.length)} — <b>${esc(f.name)}</b></div>` + rows.join('');
+      try {
+        const payload = await fileToUpload(f);
+        const r = await withMfa(() => POST('/api/owner/source/import', payload));
+        ok++;
+        rows.push(`<div class="banner ok" style="margin-top:8px"><b>${esc(f.name)}</b> — ${fmtNum(r.transactions_created)} new transactions · ${fmtNum(r.investors_created)} new investors · ${fmtNum(r.transactions_updated)} updated · ${fmtNum(r.rejected)} rejected</div>`);
+      } catch (e) {
+        failed++;
+        rows.push(`<div class="banner bad" style="margin-top:8px"><b>${esc(f.name)}</b> — ${esc(errMsg(e))}</div>`);
+      }
+    }
+    out.innerHTML = `<div class="banner ${failed ? 'warn' : 'ok'}"><b>Batch complete:</b> ${fmtNum(ok)} succeeded · ${fmtNum(failed)} failed · ${fmtNum(files.length)} total</div>` + rows.join('');
+    if (ok) { resetInvestorHistory(); state.owner.counts = null; }
   },
   'src-sync': async (el) => {
     el.disabled = true;
