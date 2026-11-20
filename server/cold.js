@@ -40,7 +40,12 @@ export function parseFilter(input = {}) {
 }
 
 function buildWhere(f) {
-  const where = ["ic.rights_status != 'DENIED'"];
+  const where = [
+    "ic.rights_status != 'DENIED'",
+    // Historical + new data quality exclusion: rows with known price and size must be
+    // within AED 300–25,000 per ft². Missing price/size stays searchable.
+    "(t.price_aed IS NULL OR t.size_m2 IS NULL OR t.size_m2 <= 0 OR (t.price_aed / (t.size_m2 * 10.76391041671)) BETWEEN 300 AND 25000)"
+  ];
   const params = [];
   for (const [k, col] of Object.entries(STRING_FILTERS)) {
     if (!f[k]) continue;
@@ -55,7 +60,7 @@ function buildWhere(f) {
   if (f.year_from != null) { where.push("CAST(substr(t.registration_date,1,4) AS INTEGER) >= ?"); params.push(f.year_from); }
   if (f.year_to != null) { where.push("CAST(substr(t.registration_date,1,4) AS INTEGER) <= ?"); params.push(f.year_to); }
   if (f.has_email) where.push('ic.email IS NOT NULL');
-  if (f.has_phone) where.push('ic.phone IS NOT NULL');
+  if (f.has_phone) where.push("ic.phone IS NOT NULL AND ic.phone NOT LIKE '%000000%'");
   const having = f.min_transactions ? `AND total_transactions >= ${Math.floor(f.min_transactions)}` : '';
   return { sql: where.join(' AND '), params, having };
 }
@@ -87,6 +92,11 @@ export function eligibility(row, transferEnabled) {
   return null;
 }
 
+const safeStoredPhone = (v) => {
+  if (!v) return null;
+  return /0{6,}/.test(String(v).replace(/\D/g, '')) ? null : v;
+};
+
 function presentRow(row, { acquired, holder, userId, ownerView, transferEnabled }) {
   const restricted = row.rights_status !== 'APPROVED';
   return {
@@ -94,8 +104,8 @@ function presentRow(row, { acquired, holder, userId, ownerView, transferEnabled 
     // PII is masked server-side for subscribers; restricted records carry no PII at all.
     name: ownerView ? row.full_name : restricted ? null : maskName(row.full_name),
     email: ownerView ? row.email : restricted ? null : maskEmail(row.email),
-    phone: ownerView ? row.phone : restricted ? null : maskPhone(row.phone),
-    has_email: !!row.email, has_phone: !!row.phone,
+    phone: ownerView ? safeStoredPhone(row.phone) : restricted ? null : maskPhone(safeStoredPhone(row.phone)),
+    has_email: !!row.email, has_phone: !!safeStoredPhone(row.phone),
     nationality: restricted && !ownerView ? null : row.nationality,
     client_role: row.client_role, country: row.country, city: row.city, area: row.area,
     property_type: row.property_type, master_developer: row.master_developer, project: row.project,
