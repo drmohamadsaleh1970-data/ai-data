@@ -80,6 +80,13 @@ const clean = (v) => {
   return s && !/^(n\/?a|null|-|—)$/i.test(s) ? s.slice(0, 200) : null;
 };
 
+const cleanPhone = (v) => {
+  const p = normalizePhone(clean(v));
+  if (!p) return null;
+  const digits = String(p).replace(/\D/g, '');
+  return /0{6,}/.test(digits) ? null : p;
+};
+
 export function normalizeRow(raw, mapping) {
   const r = {};
   for (const [h, f] of Object.entries(mapping)) r[f] = raw[h];
@@ -98,7 +105,7 @@ export function normalizeRow(raw, mapping) {
     size_m2: parseNumber(r.size_m2),
     price_aed: parseNumber(r.price_aed) == null ? null : Math.round(parseNumber(r.price_aed)),
     email: (() => { const e = clean(r.email)?.toLowerCase(); return e && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) ? e : null; })(),
-    phone: normalizePhone(clean(r.phone)) || normalizePhone(clean(r.phone2)),
+    phone: cleanPhone(r.phone) || cleanPhone(r.phone2),
   };
   if (!out.full_name) errors.push('client name missing');
   if (!out.client_role) errors.push(`client role not buyer/seller (${clean(r.client_role) ?? 'empty'})`);
