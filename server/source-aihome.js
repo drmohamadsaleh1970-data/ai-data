@@ -235,6 +235,45 @@ export function describeFilter(f) {
 }
 
 // --- Import --------------------------------------------------------------------------
+const identityText = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+function findDuplicateInvestor(conn, r, prov) {
+  // Strong identifiers always win.
+  if (r.phone) {
+    const x = conn.prepare('SELECT * FROM investor_contact WHERE phone = ? AND provenance_id = ?').get(r.phone, prov);
+    if (x) return { row: x, confidence: 100, reason: 'phone' };
+  }
+  if (r.email) {
+    const x = conn.prepare('SELECT * FROM investor_contact WHERE lower(email) = ? AND provenance_id = ?').get(r.email, prov);
+    if (x) return { row: x, confidence: 100, reason: 'email' };
+  }
+
+  // Fuzzy duplicate: same cleaned full name, no contradictory known contact details,
+  // plus at least one corroborating attribute. This catches the same person when a
+  // second file is missing phone/email without merging unrelated people on name alone.
+  const name = identityText(r.full_name);
+  if (!name) return null;
+  const candidates = conn.prepare('SELECT * FROM investor_contact WHERE lower(trim(full_name)) = lower(trim(?)) AND provenance_id = ?').all(r.full_name, prov);
+  let best = null;
+  for (const x of candidates) {
+    if (r.phone && x.phone && r.phone !== x.phone) continue;
+    if (r.email && x.email && r.email.toLowerCase() !== String(x.email).toLowerCase()) continue;
+    let score = 72;
+    const natMatch = r.nationality && x.nationality && identityText(r.nationality) === identityText(x.nationality);
+    if (natMatch) score += 12;
+    // Transaction context is checked against any existing transaction for this investor.
+    const txs = conn.prepare('SELECT city, area, project FROM investor_transaction WHERE investor_id = ? ORDER BY id DESC LIMIT 20').all(x.id);
+    const contextMatch = txs.some((t) =>
+      (r.city && t.city && identityText(r.city) === identityText(t.city)) ||
+      (r.area && t.area && identityText(r.area) === identityText(t.area)) ||
+      (r.project && t.project && identityText(r.project) === identityText(t.project))
+    );
+    if (contextMatch) score += 12;
+    if ((natMatch || contextMatch) && (!best || score > best.confidence)) best = { row: x, confidence: score, reason: 'fuzzy' };
+  }
+  return best && best.confidence >= 84 ? best : null;
+}
+
 function provenanceId(conn) {
   const row = conn.prepare('SELECT id FROM data_provenance WHERE source_name = ?').get(SOURCE_NAME);
   if (row) return row.id;
@@ -275,18 +314,16 @@ export function importRows({ rows, actor, mode, fileName, filter = null, require
   const stats = tx((conn) => {
     const prov = provenanceId(conn);
     const ts = iso();
-    const s = { investors_created: 0, transactions_created: 0, transactions_updated: 0 };
+    const s = { investors_created: 0, transactions_created: 0, transactions_updated: 0, duplicates_merged: 0 };
     const ambiguousNames = new Set();
     for (const { record: r, errors, skip } of pv.parsed) {
       if (errors.length || skip) continue;
       const existingTxn = conn.prepare('SELECT id, investor_id FROM investor_transaction WHERE source_txn_id = ?').get(r.source_txn_id);
       let investorId = existingTxn?.investor_id;
       if (!investorId) {
-        // Identity: only an exact phone or email links rows to one person. Names alone
-        // never merge; same-name records are flagged AMBIGUOUS for manual review.
-        const match = (r.phone && conn.prepare('SELECT id FROM investor_contact WHERE phone = ? AND provenance_id = ?').get(r.phone, prov))
-          || (r.email && conn.prepare('SELECT id FROM investor_contact WHERE lower(email) = ? AND provenance_id = ?').get(r.email, prov));
-        if (match) investorId = match.id;
+        // Identity deduplication: exact phone/email, then high-confidence fuzzy match.
+        const match = findDuplicateInvestor(conn, r, prov);
+        if (match) { investorId = match.row.id; s.duplicates_merged++; }
         else {
           investorId = Number(conn.prepare(`INSERT INTO investor_contact (full_name, email, phone, nationality, rights_status, marketing_permission, identity_confidence, provenance_id, updated_at)
             VALUES (?,?,?,?,'RESTRICTED_PENDING_REVIEW','UNKNOWN','CONFIRMED',?,?)`).run(r.full_name, r.email, r.phone, r.nationality, prov, ts).lastInsertRowid);
