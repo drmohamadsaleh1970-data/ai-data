@@ -103,6 +103,16 @@ export function normalizeRow(raw, mapping) {
   if (!out.full_name) errors.push('client name missing');
   if (!out.client_role) errors.push(`client role not buyer/seller (${clean(r.client_role) ?? 'empty'})`);
   if (!out.registration_date) errors.push(`registration date unreadable (${clean(r.registration_date) ?? 'empty'})`);
+  // UAE data-quality guardrail: when both price and area are known, reject implausible
+  // AED/ft² values instead of allowing them to distort heatmaps, medians, ROI or CA.
+  // Stored source area is m², so convert to ft² for this check.
+  if (out.price_aed != null && out.size_m2 != null && out.size_m2 > 0) {
+    const areaFt2 = out.size_m2 * 10.76391041671;
+    const pricePerFt2 = out.price_aed / areaFt2;
+    if (!Number.isFinite(pricePerFt2) || pricePerFt2 < 300 || pricePerFt2 > 25000) {
+      errors.push(`suspicious price per ft² (${Math.round(pricePerFt2)} AED/ft²; allowed 300–25,000)`);
+    }
+  }
   // Stable ID: the source's own transaction ID when present, otherwise a content hash so
   // re-importing the same export never duplicates transactions.
   const given = clean(r.source_txn_id);
