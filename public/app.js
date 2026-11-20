@@ -2044,7 +2044,8 @@ const actions = {
       const f = files[i];
       out.innerHTML = `<div class="banner cold">Importing ${fmtNum(i + 1)} / ${fmtNum(files.length)} — <b>${esc(f.name)}</b></div>` + rows.join('');
       try {
-        const r = await withMfa(() => POST('/api/owner/source/import', await fileToUpload(f)));
+        const payload = await fileToUpload(f);
+        const r = await withMfa(() => POST('/api/owner/source/import', payload));
         ok++;
         rows.push(`<div class="banner ok" style="margin-top:8px"><b>${esc(f.name)}</b> — ${fmtNum(r.transactions_created)} new transactions · ${fmtNum(r.investors_created)} new investors · ${fmtNum(r.transactions_updated)} updated · ${fmtNum(r.rejected)} rejected</div>`);
       } catch (e) {
